@@ -88,6 +88,16 @@ export default function EntryResultPanel({ result, summary, onClose }) {
       render: (row) => (row.limit === null || row.limit === undefined ? '无限值' : formatNumber(row.limit))
     },
     {
+      key: 'validity',
+      title: '有效性',
+      render: (row) =>
+        row.will_be_invalid ? (
+          <Tag tone="warning">无效·已保留</Tag>
+        ) : (
+          <Tag tone="success">有效</Tag>
+        )
+    },
+    {
       key: 'exceeded',
       title: '判定',
       render: (row) =>
@@ -97,6 +107,18 @@ export default function EntryResultPanel({ result, summary, onClose }) {
           <Tag tone="success">达标</Tag>
         ) : (
           <Tag tone="neutral">仅记录</Tag>
+        )
+    },
+    {
+      key: 'range',
+      title: '量程',
+      render: (row) =>
+        row.out_of_range ? (
+          <Tag tone="warning">
+            超量程{row.out_of_range === 'below' ? '(偏低)' : '(偏高)'}
+          </Tag>
+        ) : (
+          '-'
         )
     },
     {
@@ -150,6 +172,12 @@ export default function EntryResultPanel({ result, summary, onClose }) {
               <div className="stat-value danger-text">{payload.summary.exceeded_count}</div>
             </div>
             <div className="stat-card">
+              <div className="stat-label">无效(校准)</div>
+              <div className="stat-value" style={{ color: 'var(--warning)' }}>
+                {payload.summary.invalid_count ?? 0}
+              </div>
+            </div>
+            <div className="stat-card">
               <div className="stat-label">跳过重复</div>
               <div className="stat-value" style={{ color: 'var(--warning)' }}>
                 {payload.summary.duplicate_count}
@@ -159,6 +187,23 @@ export default function EntryResultPanel({ result, summary, onClose }) {
         )}
 
         <ResultTable columns={columns} rows={rows} />
+
+        {payload.device_unavailable ? (
+          <Alert tone="warning">
+            设备在监测时刻处于
+            {payload.invalid_reason === 'calibration_overdue' ? '校准超期' : '校准中'}
+            状态, 本次 {payload.summary.invalid_count} 条数据已保存但标记为<strong>无效</strong>,
+            不参与达标率统计。数据可在数据查询中筛选“仅无效”追溯。
+          </Alert>
+        ) : null}
+
+        {payload.out_of_range?.length ? (
+          <Alert tone="warning">
+            以下因子监测值超出设备登记量程, 已保存但建议人工复核:{' '}
+            {payload.out_of_range.map((item) => `${item.pollutant_label}(${item.state === 'below' ? '低于下限' : '高于上限'})`).join(', ')}
+            。
+          </Alert>
+        ) : null}
 
         {payload.duplicates?.length ? (
           <Alert tone="warning">

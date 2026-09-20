@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FilterPanel } from '../../../components/common/Card.jsx'
 import { Field, Input, Select } from '../../../components/common/FormField.jsx'
+import { deviceOptions as fetchDeviceOptions } from '../../../api/devices.js'
 import { usePollutantMeta, useStationOptions } from '../../../hooks/useOptions.js'
 
 const PERIODS = [
@@ -11,6 +12,11 @@ const PERIODS = [
 const EXCEEDED_OPTIONS = [
   { value: 'true', label: '仅超标' },
   { value: 'false', label: '仅达标' }
+]
+
+const VALID_OPTIONS = [
+  { value: 'true', label: '仅有效' },
+  { value: 'false', label: '仅无效(校准期)' }
 ]
 
 const ANNOTATION_OPTIONS = [
@@ -25,8 +31,15 @@ const SOURCE_OPTIONS = [
   { value: 'import', label: '历史导入' }
 ]
 
+const RESET_DRAFT = {
+  keyword: '', station_id: '', device_id: '', area: '', pollutant: '', period: '',
+  is_exceeded: '', is_valid: '', exceedance_status: '', data_source: '',
+  date_from: '', date_to: '', min_value: '', max_value: ''
+}
+
 export default function QueryFilters({ value, loading, onSubmit, onReset }) {
   const [draft, setDraft] = useState(value)
+  const [deviceItems, setDeviceItems] = useState([])
   const { data: stationData } = useStationOptions()
   const { data: pollutantData } = usePollutantMeta()
 
@@ -34,18 +47,29 @@ export default function QueryFilters({ value, loading, onSubmit, onReset }) {
     setDraft(value)
   }, [value])
 
-  const update = (key) => (event) => setDraft({ ...draft, [key]: event.target.value })
+  useEffect(() => {
+    let cancelled = false
+    fetchDeviceOptions(draft.station_id || undefined)
+      .then((payload) => {
+        if (!cancelled) setDeviceItems(payload.items || [])
+      })
+      .catch(() => {
+        if (!cancelled) setDeviceItems([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [draft.station_id])
+
+  const update = (key) => (event) =>
+    setDraft((prev) => ({ ...prev, [key]: event.target.value, ...(key === 'station_id' ? { device_id: '' } : {}) }))
 
   return (
     <FilterPanel
       loading={loading}
       onSearch={() => onSubmit(draft)}
       onReset={() => {
-        setDraft({
-          keyword: '', station_id: '', area: '', pollutant: '', period: '',
-          is_exceeded: '', exceedance_status: '', data_source: '',
-          date_from: '', date_to: '', min_value: '', max_value: ''
-        })
+        setDraft(RESET_DRAFT)
         onReset()
       }}
     >
@@ -63,6 +87,17 @@ export default function QueryFilters({ value, loading, onSubmit, onReset }) {
           onChange={update('station_id')}
           placeholder="全部监测点"
           options={(stationData?.items ?? []).map((item) => ({ value: String(item.id), label: `${item.code} ${item.name}` }))}
+        />
+      </Field>
+      <Field label="监测设备">
+        <Select
+          value={draft.device_id || ''}
+          onChange={update('device_id')}
+          placeholder={draft.station_id ? '全部设备' : '先选择监测点'}
+          options={deviceItems.map((item) => ({
+            value: String(item.id),
+            label: `${item.code} ${item.name}`
+          }))}
         />
       </Field>
       <Field label="所属区域">
@@ -86,6 +121,9 @@ export default function QueryFilters({ value, loading, onSubmit, onReset }) {
       </Field>
       <Field label="是否超标">
         <Select value={draft.is_exceeded || ''} onChange={update('is_exceeded')} placeholder="全部" options={EXCEEDED_OPTIONS} />
+      </Field>
+      <Field label="数据有效性">
+        <Select value={draft.is_valid || ''} onChange={update('is_valid')} placeholder="全部" options={VALID_OPTIONS} />
       </Field>
       <Field label="标注状态">
         <Select

@@ -67,9 +67,12 @@ export default function StatisticsPanel({ params, onChange, data, loading, error
                   <tr>
                     <th>分组</th>
                     <th className="text-right">{isCount ? '数据条数' : '统计值'}</th>
-                    <th className="text-right">数据量</th>
+                    <th className="text-right">有效</th>
+                    <th className="text-right">无效(校准)</th>
+                    <th className="text-right">达标数</th>
+                    <th className="text-right">达标率</th>
                     <th className="text-right">超标数</th>
-                    <th className="text-right">超标率</th>
+                    <th className="text-right">全量超标率</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -77,13 +80,25 @@ export default function StatisticsPanel({ params, onChange, data, loading, error
                     <tr key={item.key}>
                       <td>{item.label}</td>
                       <td className="text-right strong">{formatNumber(item.value)}</td>
-                      <td className="text-right">{item.count}</td>
+                      <td className="text-right">{item.valid_count}</td>
+                      <td className="text-right">
+                        {item.invalid_count ? (
+                          <span className="warning-text">{item.invalid_count}</span>
+                        ) : (
+                          0
+                        )}
+                      </td>
+                      <td className="text-right">{item.compliant_count}</td>
+                      <td className="text-right strong">{formatPercent(item.compliance_rate)}</td>
                       <td className="text-right danger-text">{item.exceeded_count}</td>
                       <td className="text-right">{formatPercent(item.exceed_rate)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              <div className="table-caption">
+                达标率 = 达标有效数据 / 有效数据总数; 校准期无效数据已从分母中排除。
+              </div>
             </div>
           </>
         ) : null}

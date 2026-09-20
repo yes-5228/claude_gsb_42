@@ -3,7 +3,7 @@ import random
 from datetime import date, datetime, timedelta
 
 from .extensions import db
-from .models import Exceedance, Measurement, Station
+from .models import CalibrationRecord, Device, DeviceRange, Exceedance, Measurement, Station
 
 DEMO_STATIONS = [
     {
@@ -64,6 +64,11 @@ STATION_FACTOR = {
 HOURLY_POINTS = (2, 8, 14, 20)
 RECORDERS = ("李静", "王敏", "陈志强", "赵宇", "孙倩")
 
+# 各因子演示量程上限 (与常规环境监测设备规格一致)
+DEVICE_RANGE_MAX = {"PM25": 1000.0, "PM10": 2000.0, "SO2": 1000.0, "NO2": 1000.0,
+                    "CO": 50.0, "O3": 1000.0}
+DEVICE_RANGE_MIN = {code: 0.0 for code in DEVICE_RANGE_MAX}
+
 
 def _value(pollutant, period, station_type, rng):
     base = POLLUTANT_BASE[pollutant] * STATION_FACTOR.get(station_type, 1.0)
@@ -73,6 +78,63 @@ def _value(pollutant, period, station_type, rng):
     if rng.random() < 0.12:  # 少量明显超标样本, 便于演示超标标注
         value *= rng.uniform(1.8, 2.6)
     return round(value, 2 if pollutant == "CO" else 1)
+
+
+def seed_devices(stations, rng):
+    """为每个监测点登记一台多因子分析仪, 并安排校准记录."""
+    devices = []
+    now = datetime.now()
+    for index, station in enumerate(stations):
+        interval_days = 180
+        # 最近一次合格校准, 部分设备刻意安排在较早日期以演示"校准超期"
+        overdue = station.code == "SZ-AQ-004"
+        days_ago = interval_days + 40 if overdue else rng.choice((30, 75, 120))
+        last_done = now - timedelta(days=days_ago, hours=rng.randint(1, 5))
+        device = Device(
+            code="AQMS-%03d" % (index + 1),
+            name="%s多因子分析仪" % station.name,
+            model=rng.choice(("TH-2000", "AM-5200", "EQMS-600")),
+            manufacturer=rng.choice(("先河环保", "聚光科技", "雪迪龙")),
+            station_id=station.id,
+            install_location="站点主站房采样平台",
+            installed_at=station.installed_at,
+            status="available" if station.status != "offline" else "retired",
+            calibration_interval_days=interval_days,
+            last_calibration_at=last_done,
+            remark="六参数气态污染物与颗粒物一体分析仪",
+        )
+        for code, upper in DEVICE_RANGE_MAX.items():
+            device.ranges.append(DeviceRange(
+                pollutant=code, min_value=DEVICE_RANGE_MIN[code], max_value=upper,
+            ))
+        db.session.add(device)
+        db.session.flush()
+
+        # 历史校准: 上次校准的完整窗口 (持续大半天)
+        db.session.add(CalibrationRecord(
+            device_id=device.id,
+            started_at=last_done - timedelta(hours=6),
+            finished_at=last_done,
+            result="pass",
+            calibrator=rng.choice(RECORDERS),
+            organization="市计量检测院",
+            note="周期性例行校准, 示值误差合格",
+        ))
+        devices.append(device)
+
+    # 市民中心站: 安排一次跨演示数据窗口的"进行中校准",
+    # 期间录入的数据会自动标记为无效 (设备校准中)
+    calibrating = next((item for item in devices if item.code == "AQMS-001"), devices[0])
+    db.session.add(CalibrationRecord(
+        device_id=calibrating.id,
+        started_at=now - timedelta(days=1, hours=2),
+        finished_at=None,
+        calibrator="王敏",
+        organization="市计量检测院",
+        note="年度强制检定, 校准期间数据仅留存不参与考核",
+    ))
+    db.session.commit()
+    return devices
 
 
 def seed_demo_data(days=5, rng=None, recorder_pool=RECORDERS):
@@ -87,9 +149,15 @@ def seed_demo_data(days=5, rng=None, recorder_pool=RECORDERS):
         created_stations.append(station)
     db.session.commit()
 
+    devices = seed_devices(created_stations, rng)
+    device_by_station = {device.station_id: device for device in devices}
+
     today = date.today()
-    totals = {"stations": len(created_stations), "measurements": 0, "exceedances": 0}
+    totals = {"stations": len(created_stations), "measurements": 0, "exceedances": 0,
+              "devices": len(devices), "invalid": 0}
     for station in created_stations:
+        device = device_by_station.get(station.id)
+        device_id = device.id if device and station.status != "offline" else None
         for offset in range(days):
             day = today - timedelta(days=offset)
             daily_entries = [
@@ -104,9 +172,11 @@ def seed_demo_data(days=5, rng=None, recorder_pool=RECORDERS):
                 data_source="device",
                 recorder=rng.choice(recorder_pool),
                 remark="日均值自动汇总",
+                device_id=device_id,
             )
             totals["measurements"] += result["summary"]["created_count"]
             totals["exceedances"] += result["summary"]["exceeded_count"]
+            totals["invalid"] += result["summary"]["invalid_count"]
 
             for hour in HOURLY_POINTS:
                 hourly_entries = [
@@ -120,9 +190,11 @@ def seed_demo_data(days=5, rng=None, recorder_pool=RECORDERS):
                     entries=hourly_entries,
                     data_source="manual",
                     recorder=rng.choice(recorder_pool),
+                    device_id=device_id,
                 )
                 totals["measurements"] += result["summary"]["created_count"]
                 totals["exceedances"] += result["summary"]["exceeded_count"]
+                totals["invalid"] += result["summary"]["invalid_count"]
 
     # 标注一部分超标记录, 让工作台同时存在待办与已处理记录
     from .services import exceedance_service

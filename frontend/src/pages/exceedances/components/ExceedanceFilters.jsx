@@ -15,6 +15,11 @@ const LEVEL_OPTIONS = [
   { value: 'severe', label: '重度超标' }
 ]
 
+const VALID_OPTIONS = [
+  { value: 'true', label: '仅有效数据' },
+  { value: 'false', label: '仅无效(校准期)' }
+]
+
 export default function ExceedanceFilters({ value, loading, onSubmit, onReset }) {
   const [draft, setDraft] = useState(value)
   const { data: stationData } = useStationOptions()
@@ -31,7 +36,7 @@ export default function ExceedanceFilters({ value, loading, onSubmit, onReset })
       loading={loading}
       onSearch={() => onSubmit(draft)}
       onReset={() => {
-        setDraft({ status: '', level: '', pollutant: '', station_id: '', date_from: '', date_to: '', keyword: '' })
+        setDraft({ status: '', level: '', pollutant: '', station_id: '', is_valid: '', date_from: '', date_to: '', keyword: '' })
         onReset()
       }}
     >
@@ -40,6 +45,9 @@ export default function ExceedanceFilters({ value, loading, onSubmit, onReset })
       </Field>
       <Field label="超标等级">
         <Select value={draft.level || ''} onChange={update('level')} placeholder="全部等级" options={LEVEL_OPTIONS} />
+      </Field>
+      <Field label="数据有效性">
+        <Select value={draft.is_valid || ''} onChange={update('is_valid')} placeholder="全部" options={VALID_OPTIONS} />
       </Field>
       <Field label="监测点">
         <Select

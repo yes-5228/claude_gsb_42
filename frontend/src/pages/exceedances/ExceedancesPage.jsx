@@ -16,6 +16,7 @@ const INITIAL_FILTERS = {
   level: '',
   pollutant: '',
   station_id: '',
+  is_valid: '',
   date_from: '',
   date_to: '',
   keyword: ''

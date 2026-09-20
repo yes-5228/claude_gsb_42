@@ -13,6 +13,11 @@ const EXCEEDED_OPTIONS = [
   { value: 'false', label: '仅达标' }
 ]
 
+const VALID_OPTIONS = [
+  { value: 'true', label: '仅有效' },
+  { value: 'false', label: '仅无效' }
+]
+
 export default function MeasurementFilters({ value, loading, onSubmit, onReset }) {
   const [draft, setDraft] = useState(value)
   const { data: stationData } = useStationOptions()
@@ -24,12 +29,17 @@ export default function MeasurementFilters({ value, loading, onSubmit, onReset }
 
   const update = (key) => (event) => setDraft({ ...draft, [key]: event.target.value })
 
+  const resetDraft = {
+    station_id: '', pollutant: '', period: '', is_exceeded: '', is_valid: '',
+    date_from: '', date_to: ''
+  }
+
   return (
     <FilterPanel
       loading={loading}
       onSearch={() => onSubmit(draft)}
       onReset={() => {
-        setDraft({ station_id: '', pollutant: '', period: '', is_exceeded: '', date_from: '', date_to: '' })
+        setDraft(resetDraft)
         onReset()
       }}
     >
@@ -57,6 +67,9 @@ export default function MeasurementFilters({ value, loading, onSubmit, onReset }
       </Field>
       <Field label="超标情况">
         <Select value={draft.is_exceeded || ''} onChange={update('is_exceeded')} placeholder="全部" options={EXCEEDED_OPTIONS} />
+      </Field>
+      <Field label="数据有效性">
+        <Select value={draft.is_valid || ''} onChange={update('is_valid')} placeholder="全部" options={VALID_OPTIONS} />
       </Field>
       <Field label="开始日期">
         <Input type="date" value={draft.date_from || ''} onChange={update('date_from')} />

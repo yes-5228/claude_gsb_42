@@ -19,7 +19,7 @@ export default function OverviewPage() {
   if (error && !data) return <ErrorState error={error} onRetry={reload} />
   if (!data) return null
 
-  const { stations, measurements, exceedances, trend, pending_exceedances: pending } = data
+  const { stations, devices, measurements, exceedances, trend, pending_exceedances: pending } = data
 
   const pendingColumns = [
     { key: 'measured_at', title: '监测时间', className: 'cell-nowrap', render: (row) => formatDateTime(row.measured_at) },
@@ -56,15 +56,32 @@ export default function OverviewPage() {
             .join(' · ')}
         />
         <StatCard
+          label="监测设备"
+          value={devices.total}
+          tone={devices.open_calibrations ? 'warning' : undefined}
+          foot={
+            (devices.by_status || [])
+              .filter((item) => item.count > 0)
+              .map((item) => `${item.label} ${item.count}`)
+              .join(' · ')
+          }
+        />
+        <StatCard
           label="监测数据总量"
           value={measurements.total}
-          foot={`覆盖 ${measurements.station_count} 个监测点 · 均值 ${formatNumber(measurements.avg_value)}`}
+          foot={`有效 ${measurements.valid_count} · 无效 ${measurements.invalid_count}`}
+        />
+        <StatCard
+          label="达标率 (有效数据)"
+          value={formatPercent(measurements.compliance_rate)}
+          tone={measurements.compliance_rate < 0.9 ? 'warning' : undefined}
+          foot={`校准期无效数据已排除 · 均值 ${formatNumber(measurements.avg_value)}`}
         />
         <StatCard
           label="超标记录"
           value={exceedances.total}
           tone={exceedances.total ? 'danger' : undefined}
-          foot={`超标率 ${formatPercent(measurements.exceed_rate)} · 最大 ${formatRatio(exceedances.max_ratio)}`}
+          foot={`全量超标率 ${formatPercent(measurements.exceed_rate)} · 最大 ${formatRatio(exceedances.max_ratio)}`}
         />
         <StatCard
           label="待标注超标"

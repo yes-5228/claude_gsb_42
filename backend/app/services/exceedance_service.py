@@ -89,6 +89,16 @@ def exceedance_query(args):
     elif str(args.get("annotated", "")).strip().lower() in {"0", "false", "no"}:
         query = query.filter(Exceedance.annotated_at.is_(None))
 
+    is_valid = (args.get("is_valid") or "").strip().lower()
+    if is_valid in {"1", "true", "yes"}:
+        query = query.join(Measurement, Exceedance.measurement_id == Measurement.id).filter(
+            Measurement.is_valid.is_(True)
+        )
+    elif is_valid in {"0", "false", "no"}:
+        query = query.join(Measurement, Exceedance.measurement_id == Measurement.id).filter(
+            Measurement.is_valid.is_(False)
+        )
+
     order = (args.get("order") or "desc").lower()
     sort_key = args.get("sort") or "measured_at"
     column = {

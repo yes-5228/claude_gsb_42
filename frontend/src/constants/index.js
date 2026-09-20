@@ -1,6 +1,7 @@
 export const NAV_ITEMS = [
   { to: '/overview', label: '运行概览', icon: '📊', title: '运行概览', subtitle: '监测点规模、数据量与超标待办一览' },
   { to: '/stations', label: '监测点台账', icon: '📍', title: '监测点台账', subtitle: '维护监测点档案、点位信息与运行状态' },
+  { to: '/devices', label: '设备与校准', icon: '🛠️', title: '监测设备与校准管理', subtitle: '登记设备档案、量程、安装位置与校准周期' },
   { to: '/measurements', label: '监测数据录入', icon: '✍️', title: '监测数据录入', subtitle: '按“监测点 + 时刻”成组录入各因子浓度' },
   { to: '/exceedances', label: '超标记录标注', icon: '⚠️', title: '超标记录标注', subtitle: '复核超标记录, 标注确认或忽略原因' },
   { to: '/query', label: '数据查询', icon: '🔍', title: '数据查询', subtitle: '多条件检索、聚合统计与结果导出' }
@@ -9,9 +10,28 @@ export const NAV_ITEMS = [
 export const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 
 export const STATION_STATUS_TONE = { active: 'success', maintenance: 'warning', offline: 'neutral' }
+export const DEVICE_STATUS_TONE = {
+  available: 'success',
+  calibrating: 'warning',
+  overdue: 'danger',
+  retired: 'neutral'
+}
+export const CALIBRATION_RESULT_TONE = { pass: 'success', fail: 'danger' }
 export const EXCEEDANCE_STATUS_TONE = { pending: 'warning', confirmed: 'danger', ignored: 'neutral' }
 export const EXCEEDANCE_LEVEL_TONE = { light: 'info', moderate: 'warning', severe: 'danger' }
 export const DATA_SOURCE_TONE = { manual: 'primary', device: 'info', import: 'neutral' }
+
+export const DEVICE_STATUS_LABELS = {
+  available: '可用',
+  calibrating: '校准中',
+  overdue: '校准超期',
+  retired: '停用'
+}
+export const INVALID_REASON_LABELS = {
+  calibration: '设备校准中',
+  calibration_overdue: '设备校准超期',
+  manual: '人工判定无效'
+}
 
 export const EXCEEDANCE_LEVEL_LABELS = { light: '轻度超标', moderate: '中度超标', severe: '重度超标' }
 export const EXCEEDANCE_STATUS_LABELS = { pending: '待标注', confirmed: '已确认', ignored: '已忽略' }

@@ -1,6 +1,6 @@
 import DataTable from '../../../components/common/DataTable.jsx'
 import Tag from '../../../components/common/Tag.jsx'
-import { DATA_SOURCE_TONE } from '../../../constants/index.js'
+import { DATA_SOURCE_TONE, INVALID_REASON_LABELS } from '../../../constants/index.js'
 import { formatDateTime, formatNumber, formatRatio } from '../../../utils/format.js'
 
 export default function MeasurementTable({ rows, loading, onDelete }) {
@@ -8,11 +8,14 @@ export default function MeasurementTable({ rows, loading, onDelete }) {
     { key: 'measured_at', title: '监测时间', className: 'cell-nowrap', render: (row) => formatDateTime(row.measured_at) },
     {
       key: 'station',
-      title: '监测点',
+      title: '监测点 / 设备',
       render: (row) => (
         <div>
           <div>{row.station?.name || '-'}</div>
-          <div className="small muted mono">{row.station?.code || ''}</div>
+          <div className="small muted mono">
+            {row.station?.code || ''}
+            {row.device_code ? ` · ${row.device_code}` : ''}
+          </div>
         </div>
       )
     },
@@ -24,7 +27,7 @@ export default function MeasurementTable({ rows, loading, onDelete }) {
       align: 'right',
       className: 'cell-nowrap',
       render: (row) => (
-        <span className={row.is_exceeded ? 'danger-text strong' : ''}>
+        <span className={row.is_exceeded && row.is_valid ? 'danger-text strong' : ''}>
           {formatNumber(row.value)} <span className="muted small">{row.unit}</span>
         </span>
       )
@@ -38,8 +41,20 @@ export default function MeasurementTable({ rows, loading, onDelete }) {
     {
       key: 'is_exceeded',
       title: '超标判定',
-      render: (row) =>
-        row.is_exceeded ? <Tag tone="danger">{formatRatio(row.exceed_ratio)}</Tag> : <Tag tone="success">达标</Tag>
+      render: (row) => {
+        if (!row.is_valid) {
+          return (
+            <Tag tone="neutral" title={INVALID_REASON_LABELS[row.invalid_reason] || '无效'}>
+              {row.invalid_reason_label || '无效'}
+            </Tag>
+          )
+        }
+        return row.is_exceeded ? (
+          <Tag tone="danger">{formatRatio(row.exceed_ratio)}</Tag>
+        ) : (
+          <Tag tone="success">达标</Tag>
+        )
+      }
     },
     {
       key: 'data_source_label',
@@ -64,6 +79,7 @@ export default function MeasurementTable({ rows, loading, onDelete }) {
       columns={columns}
       rows={rows}
       loading={loading}
+      rowClassName={(row) => (row.is_valid ? '' : 'row-invalid')}
       emptyText="暂无监测数据, 请先在上方录入"
       emptyIcon="✍️"
     />

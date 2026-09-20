@@ -2,7 +2,7 @@
 from flask import Blueprint, current_app, request
 
 from ..domain.constants import DATA_SOURCE_LABELS, PERIOD_LABELS
-from ..services import measurement_service, query_service, station_service
+from ..services import device_service, measurement_service, query_service, station_service
 from ..utils.pagination import paginate_query
 from ..utils.validation import Validator
 from .helpers import json_payload, list_payload
@@ -30,9 +30,18 @@ def preview():
     validator = Validator(data)
     period = validator.choice("period", "数据周期", choices=tuple(PERIOD_LABELS.keys()),
                               required=True, default="hourly")
+    station_id = validator.number("station_id", "监测点", required=False, minimum=1)
+    device_id = validator.number("device_id", "监测设备", required=False, minimum=1)
+    measured_at = validator.datetime_field("measured_at", "监测时间", required=False)
     validator.raise_if_invalid()
     entries = list_payload("entries", data)
-    return measurement_service.preview_entries(period or "hourly", entries)
+    return measurement_service.preview_entries(
+        period or "hourly",
+        entries,
+        station_id=int(station_id) if station_id else None,
+        measured_at=measured_at,
+        device_id=int(device_id) if device_id else None,
+    )
 
 
 @bp.post("/entries")
@@ -47,6 +56,7 @@ def create_entries():
     data_source = validator.choice("data_source", "数据来源",
                                    choices=tuple(DATA_SOURCE_LABELS.keys()),
                                    required=False, default="manual")
+    device_id = validator.number("device_id", "监测设备", required=False, minimum=1)
     recorder = validator.text("recorder", "录入人", required=False, max_length=64)
     remark = validator.text("remark", "备注", required=False, max_length=500)
     overwrite = validator.boolean("overwrite", False)
@@ -62,6 +72,7 @@ def create_entries():
         recorder=recorder,
         remark=remark,
         overwrite=bool(overwrite),
+        device_id=int(device_id) if device_id else None,
     ), 201
 
 
@@ -75,6 +86,7 @@ def export_measurements():
         ("站点编码", lambda row: row.station.code if row.station else ""),
         ("站点名称", lambda row: row.station.name if row.station else ""),
         ("所属区域", lambda row: row.station.area if row.station else ""),
+        ("监测设备", lambda row: row.device.code if row.device else ""),
         ("监测因子", lambda row: row.pollutant_label()),
         ("数据周期", lambda row: PERIOD_LABELS.get(row.period, row.period)),
         ("监测值", "value"),
@@ -82,6 +94,12 @@ def export_measurements():
         ("限值", "limit_value"),
         ("是否超标", lambda row: "是" if row.is_exceeded else "否"),
         ("超标倍数", "exceed_ratio"),
+        ("是否有效", lambda row: "无效" if not row.is_valid else "有效"),
+        ("无效原因", lambda row: {
+            "calibration": "设备校准中",
+            "calibration_overdue": "设备校准超期",
+            "manual": "人工判定无效",
+        }.get(row.invalid_reason, "")),
         ("监测时间", lambda row: row.measured_at.strftime("%Y-%m-%d %H:%M")),
         ("数据来源", lambda row: DATA_SOURCE_LABELS.get(row.data_source, row.data_source)),
         ("录入人", "recorder"),
@@ -105,10 +123,28 @@ def delete_measurement(measurement_id):
 @bp.get("/entry-context")
 def entry_context():
     """Options needed by the entry form in a single round trip."""
+    station_id = request.args.get("station_id")
     return {
         "stations": station_service.option_list(),
+        "devices": device_service.option_list(station_id=station_id),
         "periods": [{"value": key, "label": label} for key, label in PERIOD_LABELS.items()],
         "data_sources": [
             {"value": key, "label": label} for key, label in DATA_SOURCE_LABELS.items()
         ],
     }
+
+
+@bp.get("/device-availability")
+def device_availability():
+    """录入界面实时查询设备在指定监测时刻的可用状态与量程."""
+    from datetime import datetime as _datetime
+
+    from ..utils.validation import parse_datetime
+
+    device_id = request.args.get("device_id")
+    if device_id in (None, ""):
+        return {"device_context": None}
+    device = device_service.get_device(int(device_id))
+    raw = request.args.get("measured_at")
+    measured_at = parse_datetime(raw, "监测时间") if raw else _datetime.now()
+    return {"device_context": measurement_service._device_context(device, measured_at)}

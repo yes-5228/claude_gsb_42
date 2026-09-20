@@ -62,6 +62,8 @@ class Exceedance(TimestampMixin, db.Model):
             "station_name": self.station.name if self.station else None,
             "station_code": self.station.code if self.station else None,
             "unit": self.measurement.unit if self.measurement else None,
+            "is_valid": bool(self.measurement.is_valid) if self.measurement else True,
+            "invalid_reason": self.measurement.invalid_reason if self.measurement else None,
         }
         if include_relations and self.measurement:
             payload["measurement"] = self.measurement.to_dict(include_station=True)

@@ -78,12 +78,14 @@ def parse_filters(args):
 
     filters = {
         "station_ids": _int_list(args, "station_id"),
+        "device_ids": _int_list(args, "device_id"),
         "areas": _split(args.get("area")),
         "station_types": _split(args.get("station_type")),
         "pollutants": pollutants,
         "periods": periods,
         "data_sources": _split(args.get("data_source")),
         "is_exceeded": _bool_arg(args, "is_exceeded"),
+        "is_valid": _bool_arg(args, "is_valid"),
         "exceedance_status": _split(args.get("exceedance_status")),
         "date_from": _date_arg(args, "date_from"),
         "date_to": _date_arg(args, "date_to", end_of_day=True),
@@ -109,6 +111,8 @@ def apply_filters(query, filters):
     query = query.join(Station, Measurement.station_id == Station.id)
     if filters["station_ids"]:
         query = query.filter(Measurement.station_id.in_(filters["station_ids"]))
+    if filters["device_ids"]:
+        query = query.filter(Measurement.device_id.in_(filters["device_ids"]))
     if filters["areas"]:
         query = query.filter(Station.area.in_(filters["areas"]))
     if filters["station_types"]:
@@ -121,6 +125,8 @@ def apply_filters(query, filters):
         query = query.filter(Measurement.data_source.in_(filters["data_sources"]))
     if filters["is_exceeded"] is not None:
         query = query.filter(Measurement.is_exceeded.is_(filters["is_exceeded"]))
+    if filters["is_valid"] is not None:
+        query = query.filter(Measurement.is_valid.is_(filters["is_valid"]))
     if filters["date_from"]:
         query = query.filter(Measurement.measured_at >= filters["date_from"])
     if filters["date_to"]:
@@ -164,7 +170,12 @@ def measurement_query(args):
 
 
 def summary(filters):
-    """Aggregate counters shown above the query result table."""
+    """Aggregate counters shown above the query result table.
+
+    达标率 (compliance_rate) 以**有效数据**为分母:
+    校准期等无效数据原样保留但不计入达标统计。
+    """
+    valid_cond = Measurement.is_valid.is_(True)
     query = apply_filters(
         db.session.query(
             func.count(Measurement.id),
@@ -173,16 +184,30 @@ def summary(filters):
             func.min(Measurement.measured_at),
             func.max(Measurement.measured_at),
             func.avg(Measurement.value),
+            func.sum(cast(db.not_(Measurement.is_valid), db.Integer)),
+            # 仅统计有效数据中的超标数
+            func.sum(cast(db.and_(valid_cond, Measurement.is_exceeded.is_(True)), db.Integer)),
         ),
         filters,
     )
-    total, exceeded, stations, first_at, last_at, avg_value = query.one()
+    (total, exceeded, stations, first_at, last_at, avg_value,
+     invalid, valid_exceeded) = query.one()
     total = int(total or 0)
     exceeded = int(exceeded or 0)
+    invalid_count = int(invalid or 0)
+    valid_count = total - invalid_count
+    valid_exceeded_count = int(valid_exceeded or 0)
     return {
         "total": total,
         "exceeded_count": exceeded,
         "exceed_rate": round(exceeded / total, 4) if total else 0.0,
+        "valid_count": valid_count,
+        "invalid_count": invalid_count,
+        "valid_exceeded_count": valid_exceeded_count,
+        "compliant_count": valid_count - valid_exceeded_count,
+        "compliance_rate": round(
+            (valid_count - valid_exceeded_count) / valid_count, 4
+        ) if valid_count else 0.0,
         "station_count": int(stations or 0),
         "first_measured_at": iso(first_at),
         "last_measured_at": iso(last_at),
@@ -217,6 +242,11 @@ def statistics(args):
     value_expr = _metric_expression(metric).label("metric_value")
     count_expr = func.count(Measurement.id).label("row_count")
     exceeded_expr = func.sum(cast(Measurement.is_exceeded, db.Integer)).label("exceeded_count")
+    valid_expr = func.sum(cast(Measurement.is_valid, db.Integer)).label("valid_count")
+    valid_exceeded_expr = func.sum(
+        cast(db.and_(Measurement.is_valid.is_(True), Measurement.is_exceeded.is_(True)),
+             db.Integer)
+    ).label("valid_exceeded_count")
 
     if group_by == "station":
         query = db.session.query(
@@ -227,21 +257,30 @@ def statistics(args):
             value_expr,
             count_expr,
             exceeded_expr,
+            valid_expr,
+            valid_exceeded_expr,
         ).group_by(Station.id, Station.code, Station.name, Station.area)
         is_time_group = False
     elif group_by == "area":
         query = db.session.query(
-            Station.area.label("area"), value_expr, count_expr, exceeded_expr
+            Station.area.label("area"), value_expr, count_expr, exceeded_expr,
+            valid_expr, valid_exceeded_expr,
         ).group_by(Station.area)
         is_time_group = False
     elif group_by == "day":
         bucket = func.date(Measurement.measured_at).label("bucket")
-        query = db.session.query(bucket, value_expr, count_expr, exceeded_expr).group_by(bucket)
+        query = db.session.query(
+            bucket, value_expr, count_expr, exceeded_expr,
+            valid_expr, valid_exceeded_expr,
+        ).group_by(bucket)
         is_time_group = True
     elif group_by == "month":
         year = func.extract("year", Measurement.measured_at).label("year")
         month = func.extract("month", Measurement.measured_at).label("month")
-        query = db.session.query(year, month, value_expr, count_expr, exceeded_expr).group_by(
+        query = db.session.query(
+            year, month, value_expr, count_expr, exceeded_expr,
+            valid_expr, valid_exceeded_expr,
+        ).group_by(
             year, month
         )
         is_time_group = True
@@ -252,7 +291,8 @@ def statistics(args):
             "data_source": Measurement.data_source,
         }[group_by]
         query = db.session.query(
-            column.label("bucket"), value_expr, count_expr, exceeded_expr
+            column.label("bucket"), value_expr, count_expr, exceeded_expr,
+            valid_expr, valid_exceeded_expr,
         ).group_by(column)
         is_time_group = False
 
@@ -264,6 +304,8 @@ def statistics(args):
         data = dict(row._mapping)
         count = int(data.get("row_count") or 0)
         exceeded = int(data.get("exceeded_count") or 0)
+        valid_count = int(data.get("valid_count") or 0)
+        valid_exceeded = int(data.get("valid_exceeded_count") or 0)
         raw_value = data.get("metric_value")
         if group_by == "station":
             key = data.get("station_code")
@@ -287,6 +329,7 @@ def statistics(args):
             key = data.get("bucket")
             label = DATA_SOURCE_LABELS.get(key, key)
 
+        compliant_count = valid_count - valid_exceeded
         items.append(
             {
                 "key": key,
@@ -295,6 +338,12 @@ def statistics(args):
                 "count": count,
                 "exceeded_count": exceeded,
                 "exceed_rate": round(exceeded / count, 4) if count else 0.0,
+                "valid_count": valid_count,
+                "invalid_count": count - valid_count,
+                "compliant_count": compliant_count,
+                "compliance_rate": round(
+                    compliant_count / valid_count, 4
+                ) if valid_count else 0.0,
             }
         )
 
@@ -310,6 +359,9 @@ def statistics(args):
         "totals": {
             "count": sum(item["count"] for item in items),
             "exceeded_count": sum(item["exceeded_count"] for item in items),
+            "valid_count": sum(item["valid_count"] for item in items),
+            "invalid_count": sum(item["invalid_count"] for item in items),
+            "compliant_count": sum(item["compliant_count"] for item in items),
         },
     }
 

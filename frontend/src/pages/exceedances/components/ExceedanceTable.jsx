@@ -24,6 +24,13 @@ export default function ExceedanceTable({
       )
     },
     { key: 'pollutant_label', title: '因子', className: 'cell-nowrap' },
+    {
+      key: 'validity',
+      title: '有效性',
+      className: 'cell-nowrap',
+      render: (row) =>
+        row.is_valid === false ? <Tag tone="warning">无效·校准期</Tag> : <Tag tone="success">有效</Tag>
+    },
     { key: 'period_label', title: '周期', className: 'cell-nowrap' },
     {
       key: 'value',

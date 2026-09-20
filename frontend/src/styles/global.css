@@ -107,6 +107,7 @@ a { color: var(--primary); text-decoration: none; }
 .strong { font-weight: 600; }
 .danger-text { color: var(--danger); }
 .success-text { color: var(--success); }
+.warning-text { color: var(--warning); }
 
 /* ---------- buttons ---------- */
 .btn {
@@ -126,6 +127,16 @@ a { color: var(--primary); text-decoration: none; }
 .btn-sm { padding: 5px 10px; font-size: 12px; border-radius: 6px; }
 .btn-block { width: 100%; }
 .btn-group { display: inline-flex; gap: 6px; }
+.link-btn {
+  border: none; background: none; padding: 0; cursor: pointer;
+  color: var(--primary); font: inherit; font-family: var(--font-mono, monospace);
+}
+.link-btn:hover { text-decoration: underline; }
+
+/* 校准期无效数据行: 置灰 + 左侧警示 */
+.data-table tr.row-invalid td { color: var(--text-muted); }
+.data-table tr.row-invalid { background: #faf7ed; }
+.data-table tr.row-invalid:hover { background: #f5efdf; }
 
 /* ---------- form controls ---------- */
 .field { display: flex; flex-direction: column; gap: 6px; }

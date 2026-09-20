@@ -1,12 +1,21 @@
 import DataTable from '../../../components/common/DataTable.jsx'
 import Tag from '../../../components/common/Tag.jsx'
-import { DATA_SOURCE_TONE, EXCEEDANCE_STATUS_TONE } from '../../../constants/index.js'
+import { DATA_SOURCE_TONE, EXCEEDANCE_STATUS_TONE, INVALID_REASON_LABELS } from '../../../constants/index.js'
 import { formatDateTime, formatNumber } from '../../../utils/format.js'
 
 export default function QueryResultTable({ rows, loading }) {
   const columns = [
     { key: 'measured_at', title: '监测时间', className: 'cell-nowrap', render: (row) => formatDateTime(row.measured_at) },
-    { key: 'station', title: '监测点', render: (row) => `${row.station?.code || ''} ${row.station?.name || ''}` },
+    {
+      key: 'station',
+      title: '监测点 / 设备',
+      render: (row) => (
+        <div>
+          <div>{`${row.station?.code || ''} ${row.station?.name || ''}`}</div>
+          <div className="small muted mono">{row.device_code ? `设备 ${row.device_code}` : '未关联设备'}</div>
+        </div>
+      )
+    },
     { key: 'station_area', title: '区域', render: (row) => row.station?.area || '-' },
     { key: 'pollutant_label', title: '因子', className: 'cell-nowrap' },
     { key: 'period_label', title: '周期', className: 'cell-nowrap' },
@@ -15,16 +24,29 @@ export default function QueryResultTable({ rows, loading }) {
       title: '监测值',
       align: 'right',
       render: (row) => (
-        <span className={row.is_exceeded ? 'danger-text strong' : ''}>
+        <span className={row.is_exceeded && row.is_valid ? 'danger-text strong' : ''}>
           {formatNumber(row.value)} <span className="muted small">{row.unit}</span>
         </span>
       )
     },
     { key: 'limit_value', title: '限值', align: 'right', render: (row) => (row.limit_value === null ? '无限值' : formatNumber(row.limit_value)) },
     {
+      key: 'is_valid',
+      title: '有效性',
+      render: (row) =>
+        row.is_valid ? (
+          <Tag tone="success">有效</Tag>
+        ) : (
+          <Tag tone="warning">{row.invalid_reason_label || INVALID_REASON_LABELS[row.invalid_reason] || '无效'}</Tag>
+        )
+    },
+    {
       key: 'is_exceeded',
       title: '超标',
-      render: (row) => (row.is_exceeded ? <Tag tone="danger">是</Tag> : <Tag tone="success">否</Tag>)
+      render: (row) => {
+        if (!row.is_valid) return <span className="muted small">不计入</span>
+        return row.is_exceeded ? <Tag tone="danger">是</Tag> : <Tag tone="success">否</Tag>
+      }
     },
     {
       key: 'exceedance_status',
@@ -51,6 +73,7 @@ export default function QueryResultTable({ rows, loading }) {
       columns={columns}
       rows={rows}
       loading={loading}
+      rowClassName={(row) => (row.is_valid ? '' : 'row-invalid')}
       emptyText="没有符合条件的数据, 请调整筛选条件"
       emptyIcon="🔍"
     />

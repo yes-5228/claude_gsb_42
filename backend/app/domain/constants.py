@@ -14,6 +14,22 @@ STATION_TYPE_LABELS = {
 
 STATION_STATUS_LABELS = {"active": "运行中", "maintenance": "维护中", "offline": "停用"}
 
+DEVICE_STATUS_LABELS = {
+    "available": "可用",
+    "calibrating": "校准中",
+    "overdue": "校准超期",
+    "retired": "停用",
+}
+
+CALIBRATION_RESULT_LABELS = {"pass": "合格", "fail": "不合格"}
+
+# 监测数据无效原因
+INVALID_REASON_LABELS = {
+    "calibration": "设备校准中",
+    "calibration_overdue": "设备校准超期",
+    "manual": "人工判定无效",
+}
+
 EXCEEDANCE_LEVEL_LABELS = {"light": "轻度超标", "moderate": "中度超标", "severe": "重度超标"}
 
 EXCEEDANCE_STATUS_LABELS = {"pending": "待标注", "confirmed": "已确认", "ignored": "已忽略"}
@@ -27,6 +43,8 @@ def options_payload():
     return {
         "station_type": as_options(STATION_TYPE_LABELS),
         "station_status": as_options(STATION_STATUS_LABELS),
+        "device_status": as_options(DEVICE_STATUS_LABELS),
+        "calibration_result": as_options(CALIBRATION_RESULT_LABELS),
         "period": as_options(PERIOD_LABELS),
         "data_source": as_options(DATA_SOURCE_LABELS),
         "exceedance_level": as_options(EXCEEDANCE_LEVEL_LABELS),

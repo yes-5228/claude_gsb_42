@@ -5,8 +5,10 @@ from flask import Blueprint, current_app
 
 from ..domain.constants import (
     DATA_SOURCE_LABELS,
+    DEVICE_STATUS_LABELS,
     EXCEEDANCE_LEVEL_LABELS,
     EXCEEDANCE_STATUS_LABELS,
+    INVALID_REASON_LABELS,
     PERIOD_LABELS,
     STATION_STATUS_LABELS,
     STATION_TYPE_LABELS,
@@ -14,7 +16,7 @@ from ..domain.constants import (
 )
 from ..domain.standards import POLLUTANTS
 from ..extensions import db
-from ..services import exceedance_service, query_service, station_service
+from ..services import device_service, exceedance_service, query_service, station_service
 
 bp = Blueprint("meta", __name__)
 
@@ -49,6 +51,10 @@ def options():
     payload = options_payload()
     payload["stations"] = station_service.option_list()
     payload["areas"] = station_service.area_list()
+    payload["devices"] = device_service.option_list()
+    payload["invalid_reason"] = [
+        {"value": key, "label": label} for key, label in INVALID_REASON_LABELS.items()
+    ]
     return payload
 
 
@@ -72,6 +78,7 @@ def overview():
     )
     return {
         "stations": station_service.metadata_summary(),
+        "devices": device_service.metadata_summary(),
         "measurements": query_service.summary(filters),
         "exceedances": exceedance_service.summary({}),
         "pending_exceedances": [record.to_dict() for record in pending_records],
@@ -79,9 +86,11 @@ def overview():
         "labels": {
             "station_status": STATION_STATUS_LABELS,
             "station_type": STATION_TYPE_LABELS,
+            "device_status": DEVICE_STATUS_LABELS,
             "exceedance_status": EXCEEDANCE_STATUS_LABELS,
             "exceedance_level": EXCEEDANCE_LEVEL_LABELS,
             "data_source": DATA_SOURCE_LABELS,
+            "invalid_reason": INVALID_REASON_LABELS,
         },
         "generated_at": datetime.now().isoformat(timespec="seconds"),
     }

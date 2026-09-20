@@ -17,10 +17,12 @@ import StatisticsPanel from './components/StatisticsPanel.jsx'
 const INITIAL_FILTERS = {
   keyword: '',
   station_id: '',
+  device_id: '',
   area: '',
   pollutant: '',
   period: '',
   is_exceeded: '',
+  is_valid: '',
   exceedance_status: '',
   data_source: '',
   date_from: '',
@@ -73,12 +75,32 @@ export default function QueryPage() {
       {query.error ? <Alert tone="error">{query.error.message}</Alert> : null}
 
       <div className="stat-grid">
-        <StatCard label="符合条件的数据量" value={summary ? summary.total : '-'} foot={summary ? `涉及 ${summary.station_count} 个监测点` : ''} />
+        <StatCard
+          label="符合条件的数据量"
+          value={summary ? summary.total : '-'}
+          foot={summary ? `涉及 ${summary.station_count} 个监测点` : ''}
+        />
+        <StatCard
+          label="达标率 (仅有效数据)"
+          value={summary ? formatPercent(summary.compliance_rate) : '-'}
+          tone={summary?.compliance_rate < 0.9 ? 'warning' : undefined}
+          foot={
+            summary
+              ? `有效 ${summary.valid_count} 条 · 达标 ${summary.compliant_count} 条`
+              : ''
+          }
+        />
+        <StatCard
+          label="无效数据 (校准期)"
+          value={summary ? summary.invalid_count : '-'}
+          tone={summary?.invalid_count ? 'warning' : undefined}
+          foot="保留但不参与达标率统计"
+        />
         <StatCard
           label="超标记录"
           value={summary ? summary.exceeded_count : '-'}
           tone={summary?.exceeded_count ? 'danger' : undefined}
-          foot={summary ? `超标率 ${formatPercent(summary.exceed_rate)}` : ''}
+          foot={summary ? `全量超标率 ${formatPercent(summary.exceed_rate)}` : ''}
         />
         <StatCard label="平均浓度" value={summary ? formatNumber(summary.avg_value) : '-'} foot="按当前筛选范围计算" />
         <StatCard
