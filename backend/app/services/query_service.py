@@ -1,7 +1,7 @@
 """监测数据查询: 过滤条件解析, 统计聚合与导出数据准备."""
 from datetime import datetime, time
 
-from sqlalchemy import cast, func, or_
+from sqlalchemy import case, cast, func, or_
 
 from ..domain.constants import (
     DATA_SOURCE_LABELS,
@@ -54,6 +54,34 @@ def _bool_arg(args, name):
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _parse_validity(args):
+    """Data-validity filter.
+
+    Accepted values:
+      - ``valid`` / ``true`` / ``1``: only valid readings
+      - ``invalid`` / ``false`` / ``0``: only calibration-period invalid readings
+      - ``all`` / empty: every retained reading
+    The legacy ``include_invalid=false`` switch also restricts to valid data
+    (compliance statistics exclude calibration-period rows by default).
+    """
+    raw = args.get("is_valid")
+    if raw in (None, ""):
+        if "include_invalid" in args and not _bool_arg(args, "include_invalid"):
+            return True
+        return None
+    text = str(raw).strip().lower()
+    if text in ("valid", "true", "1", "yes"):
+        return True
+    if text in ("invalid", "false", "0", "no"):
+        return False
+    if text == "all":
+        return None
+    raise ValidationError(
+        "数据有效性参数取值不合法: %s (valid / invalid / all)" % raw,
+        fields={"is_valid": "unknown"},
+    )
+
+
 def _date_arg(args, name, end_of_day=False):
     raw = args.get(name)
     if raw in (None, ""):
@@ -84,6 +112,7 @@ def parse_filters(args):
         "periods": periods,
         "data_sources": _split(args.get("data_source")),
         "is_exceeded": _bool_arg(args, "is_exceeded"),
+        "is_valid": _parse_validity(args),
         "exceedance_status": _split(args.get("exceedance_status")),
         "date_from": _date_arg(args, "date_from"),
         "date_to": _date_arg(args, "date_to", end_of_day=True),
@@ -121,6 +150,8 @@ def apply_filters(query, filters):
         query = query.filter(Measurement.data_source.in_(filters["data_sources"]))
     if filters["is_exceeded"] is not None:
         query = query.filter(Measurement.is_exceeded.is_(filters["is_exceeded"]))
+    if filters["is_valid"] is not None:
+        query = query.filter(Measurement.is_valid.is_(filters["is_valid"]))
     if filters["date_from"]:
         query = query.filter(Measurement.measured_at >= filters["date_from"])
     if filters["date_to"]:
@@ -164,7 +195,12 @@ def measurement_query(args):
 
 
 def summary(filters):
-    """Aggregate counters shown above the query result table."""
+    """Aggregate counters shown above the query result table.
+
+    ``exceed_rate`` is computed over the rows matching the filter; the dedicated
+    ``compliance_rate`` / ``valid_*`` fields always exclude calibration-period
+    invalid readings, which is what 达标率 statistics must use.
+    """
     query = apply_filters(
         db.session.query(
             func.count(Measurement.id),
@@ -179,10 +215,32 @@ def summary(filters):
     total, exceeded, stations, first_at, last_at, avg_value = query.one()
     total = int(total or 0)
     exceeded = int(exceeded or 0)
+
+    # 达标率口径: 校准期无效数据一律剔除, 不受 is_valid 筛选影响
+    valid_filters = {**filters, "is_valid": True}
+    valid_total, valid_exceeded = apply_filters(
+        db.session.query(
+            func.count(Measurement.id),
+            func.sum(cast(Measurement.is_exceeded, db.Integer)),
+        ),
+        valid_filters,
+    ).one()
+    valid_total = int(valid_total or 0)
+    valid_exceeded = int(valid_exceeded or 0)
+
+    invalid_total = apply_filters(
+        db.session.query(func.count(Measurement.id)),
+        {**filters, "is_valid": False},
+    ).scalar()
     return {
         "total": total,
         "exceeded_count": exceeded,
         "exceed_rate": round(exceeded / total, 4) if total else 0.0,
+        "valid_count": valid_total,
+        "valid_exceeded_count": valid_exceeded,
+        "compliant_count": valid_total - valid_exceeded,
+        "compliance_rate": round((valid_total - valid_exceeded) / valid_total, 4) if valid_total else 0.0,
+        "invalid_count": int(invalid_total or 0),
         "station_count": int(stations or 0),
         "first_measured_at": iso(first_at),
         "last_measured_at": iso(last_at),
@@ -201,7 +259,12 @@ def _metric_expression(metric):
 
 
 def statistics(args):
-    """Grouped aggregation used by the query page statistics panel."""
+    """Grouped aggregation used by the query page statistics panel.
+
+    By default calibration-period invalid readings are excluded so that the
+    达标率 / 超标率 columns reflect usable data only. Pass ``is_valid=all``
+    (or ``include_invalid=true``) to include them.
+    """
     filters = parse_filters(args)
     group_by = args.get("group_by") or "pollutant"
     metric = args.get("metric") or "avg"
@@ -213,10 +276,24 @@ def statistics(args):
         raise ValidationError(
             "metric 仅支持: %s" % ", ".join(METRIC_CHOICES), fields={"metric": "unknown"}
         )
+    include_invalid = str(args.get("include_invalid", "")).strip().lower() in {"1", "true", "yes"}
+    if include_invalid:
+        filters["is_valid"] = None
+    elif "is_valid" not in args:
+        # 达标率统计默认剔除校准期无效数据
+        filters["is_valid"] = True
 
     value_expr = _metric_expression(metric).label("metric_value")
     count_expr = func.count(Measurement.id).label("row_count")
     exceeded_expr = func.sum(cast(Measurement.is_exceeded, db.Integer)).label("exceeded_count")
+    invalid_expr = func.sum(
+        case((Measurement.is_valid.is_(False), 1), else_=0)
+    ).label("invalid_count")
+    # 仅统计有效数据中的超标数, 保证达标率口径恒定
+    valid_exceeded_expr = func.sum(
+        case((db.and_(Measurement.is_valid.is_(True), Measurement.is_exceeded.is_(True)), 1),
+             else_=0)
+    ).label("valid_exceeded_count")
 
     if group_by == "station":
         query = db.session.query(
@@ -227,23 +304,27 @@ def statistics(args):
             value_expr,
             count_expr,
             exceeded_expr,
+            valid_exceeded_expr,
+            invalid_expr,
         ).group_by(Station.id, Station.code, Station.name, Station.area)
         is_time_group = False
     elif group_by == "area":
         query = db.session.query(
-            Station.area.label("area"), value_expr, count_expr, exceeded_expr
+            Station.area.label("area"), value_expr, count_expr, exceeded_expr, invalid_expr, valid_exceeded_expr
         ).group_by(Station.area)
         is_time_group = False
     elif group_by == "day":
         bucket = func.date(Measurement.measured_at).label("bucket")
-        query = db.session.query(bucket, value_expr, count_expr, exceeded_expr).group_by(bucket)
+        query = db.session.query(
+            bucket, value_expr, count_expr, exceeded_expr, invalid_expr, valid_exceeded_expr
+        ).group_by(bucket)
         is_time_group = True
     elif group_by == "month":
         year = func.extract("year", Measurement.measured_at).label("year")
         month = func.extract("month", Measurement.measured_at).label("month")
-        query = db.session.query(year, month, value_expr, count_expr, exceeded_expr).group_by(
-            year, month
-        )
+        query = db.session.query(
+            year, month, value_expr, count_expr, exceeded_expr, invalid_expr, valid_exceeded_expr
+        ).group_by(year, month)
         is_time_group = True
     else:
         column = {
@@ -252,7 +333,7 @@ def statistics(args):
             "data_source": Measurement.data_source,
         }[group_by]
         query = db.session.query(
-            column.label("bucket"), value_expr, count_expr, exceeded_expr
+            column.label("bucket"), value_expr, count_expr, exceeded_expr, invalid_expr, valid_exceeded_expr
         ).group_by(column)
         is_time_group = False
 
@@ -264,6 +345,9 @@ def statistics(args):
         data = dict(row._mapping)
         count = int(data.get("row_count") or 0)
         exceeded = int(data.get("exceeded_count") or 0)
+        invalid = int(data.get("invalid_count") or 0)
+        valid_exceeded = int(data.get("valid_exceeded_count") or 0)
+        valid_count = count - invalid
         raw_value = data.get("metric_value")
         if group_by == "station":
             key = data.get("station_code")
@@ -295,6 +379,11 @@ def statistics(args):
                 "count": count,
                 "exceeded_count": exceeded,
                 "exceed_rate": round(exceeded / count, 4) if count else 0.0,
+                "valid_count": valid_count,
+                "invalid_count": invalid,
+                "valid_exceeded_count": valid_exceeded,
+                "compliance_rate": round((valid_count - valid_exceeded) / valid_count, 4)
+                if valid_count else 0.0,
             }
         )
 
@@ -303,13 +392,24 @@ def statistics(args):
     else:
         items.sort(key=lambda item: (item["value"] is None, -(item["value"] or 0)))
 
+    total_count = sum(item["count"] for item in items)
+    total_exceeded = sum(item["exceeded_count"] for item in items)
+    total_invalid = sum(item["invalid_count"] for item in items)
+    total_valid_exceeded = sum(item["valid_exceeded_count"] for item in items)
+    total_valid = total_count - total_invalid
     return {
         "group_by": group_by,
         "metric": metric,
+        "include_invalid": include_invalid,
         "items": items,
         "totals": {
-            "count": sum(item["count"] for item in items),
-            "exceeded_count": sum(item["exceeded_count"] for item in items),
+            "count": total_count,
+            "exceeded_count": total_exceeded,
+            "invalid_count": total_invalid,
+            "valid_count": total_valid,
+            "valid_exceeded_count": total_valid_exceeded,
+            "compliance_rate": round((total_valid - total_valid_exceeded) / total_valid, 4)
+            if total_valid else 0.0,
         },
     }
 
@@ -319,6 +419,11 @@ def option_payload():
         "group_by": list(GROUP_BY_CHOICES),
         "metric": list(METRIC_CHOICES),
         "sort": list(SORT_CHOICES),
+        "is_valid": [
+            {"value": "all", "label": "全部(含校准期无效)"},
+            {"value": "valid", "label": "仅有效"},
+            {"value": "invalid", "label": "仅无效"},
+        ],
         "exceedance_status": [
             {"value": key, "label": label} for key, label in EXCEEDANCE_STATUS_LABELS.items()
         ],

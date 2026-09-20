@@ -3,7 +3,7 @@ import random
 from datetime import date, datetime, timedelta
 
 from .extensions import db
-from .models import Exceedance, Measurement, Station
+from .models import CalibrationRecord, Device, Exceedance, Station
 
 DEMO_STATIONS = [
     {
@@ -64,6 +64,25 @@ STATION_FACTOR = {
 HOURLY_POINTS = (2, 8, 14, 20)
 RECORDERS = ("李静", "王敏", "陈志强", "赵宇", "孙倩")
 
+# 每个监测点登记的监测设备 (多参数一体机按因子拆分台账, 便于单独校准)
+DEVICE_POLLUTANTS = ("PM25", "PM10", "SO2", "NO2", "CO", "O3")
+DEVICE_META = {
+    "PM25": ("聚光科技", "AQMS-503", (0.0, 1000.0), 180),
+    "PM10": ("聚光科技", "AQMS-504", (0.0, 2000.0), 180),
+    "SO2": ("赛默飞", "43i", (0.0, 1000.0), 365),
+    "NO2": ("赛默飞", "42i", (0.0, 500.0), 365),
+    "CO": ("赛默飞", "48i", (0.0, 50.0), 365),
+    "O3": ("赛默飞", "49i", (0.0, 1000.0), 365),
+}
+POLLUTANT_LOCATION = {
+    "PM25": "站房顶部采样总管 1 号位",
+    "PM10": "站房顶部采样总管 2 号位",
+    "SO2": "站房分析间机柜 A 列",
+    "NO2": "站房分析间机柜 A 列",
+    "CO": "站房分析间机柜 B 列",
+    "O3": "站房分析间机柜 B 列",
+}
+
 
 def _value(pollutant, period, station_type, rng):
     base = POLLUTANT_BASE[pollutant] * STATION_FACTOR.get(station_type, 1.0)
@@ -73,6 +92,75 @@ def _value(pollutant, period, station_type, rng):
     if rng.random() < 0.12:  # 少量明显超标样本, 便于演示超标标注
         value *= rng.uniform(1.8, 2.6)
     return round(value, 2 if pollutant == "CO" else 1)
+
+
+def _seed_devices(created_stations, today, rng):
+    """登记设备档案与校准记录, 并制造校准窗口以演示无效数据与录入提示."""
+    device_count = 0
+    calibration_count = 0
+    # 校准窗口: 覆盖昨天整日 (当日录入数据将标记无效) + 今天正在进行的校准
+    cal_day = today - timedelta(days=1)
+    for index, station in enumerate(created_stations):
+        if station.status == "offline":
+            continue
+        for code in DEVICE_POLLUTANTS:
+            manufacturer, model_name, (dmin, dmax), interval = DEVICE_META[code]
+            device = Device(
+                code="%s-%s" % (station.code.replace("SZ-", ""), code),
+                name="%s %s 分析仪" % (station.name, dict(PM25="PM2.5", PM10="PM10", SO2="SO₂",
+                                                          NO2="NO₂", CO="CO", O3="O₃")[code]),
+                station_id=station.id,
+                pollutant=code,
+                manufacturer=manufacturer,
+                model=model_name,
+                serial_no="SN%s%03d" % (code, index + 1),
+                measure_min=dmin,
+                measure_max=dmax,
+                unit="mg/m³" if code == "CO" else "μg/m³",
+                location=POLLUTANT_LOCATION[code],
+                calibration_interval_days=interval,
+                status="in_service" if station.status == "active" else "standby",
+                installed_at=station.installed_at,
+                remark=None,
+            )
+            db.session.add(device)
+            db.session.flush()
+            device_count += 1
+
+            # 一条已完成的历史校准 (90 天前, 合格)
+            past_start = datetime.combine(today - timedelta(days=90), datetime.min.time()).replace(hour=9)
+            db.session.add(
+                CalibrationRecord(
+                    device_id=device.id,
+                    started_at=past_start,
+                    ended_at=past_start + timedelta(hours=3),
+                    status="completed",
+                    result="passed",
+                    agency="深圳市计量质量检测研究院",
+                    operator=rng.choice(RECORDERS),
+                    certificate_no="CAL-2026-%04d" % calibration_count,
+                    note="周期校准, 示值误差在允许范围内",
+                    completed_at=past_start + timedelta(hours=3),
+                )
+            )
+            calibration_count += 1
+
+            # 市民中心站 PM2.5: 昨天整日校准 -> 该日 PM2.5 数据无效; 今天仍在校准中
+            if station.code == "SZ-AQ-001" and code == "PM25":
+                db.session.add(
+                    CalibrationRecord(
+                        device_id=device.id,
+                        started_at=datetime.combine(cal_day, datetime.min.time()),
+                        ended_at=datetime.combine(today, datetime.min.time()) + timedelta(hours=12),
+                        status="in_progress",
+                        agency="深圳市计量质量检测研究院",
+                        operator=rng.choice(RECORDERS),
+                        note="零点 / 跨度校准, 校准期间数据仅留存不参与达标统计",
+                    )
+                )
+                calibration_count += 1
+    db.session.commit()
+    return {"devices": device_count, "calibrations": calibration_count}
 
 
 def seed_demo_data(days=5, rng=None, recorder_pool=RECORDERS):
@@ -88,7 +176,14 @@ def seed_demo_data(days=5, rng=None, recorder_pool=RECORDERS):
     db.session.commit()
 
     today = date.today()
-    totals = {"stations": len(created_stations), "measurements": 0, "exceedances": 0}
+    device_totals = _seed_devices(created_stations, today, rng)
+    totals = {
+        "stations": len(created_stations),
+        "devices": device_totals["devices"],
+        "calibrations": device_totals["calibrations"],
+        "measurements": 0,
+        "exceedances": 0,
+    }
     for station in created_stations:
         for offset in range(days):
             day = today - timedelta(days=offset)

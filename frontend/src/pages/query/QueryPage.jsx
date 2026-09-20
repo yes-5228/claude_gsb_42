@@ -9,7 +9,7 @@ import { useToast } from '../../components/common/ToastProvider.jsx'
 import { useAsyncData } from '../../hooks/useAsyncData.js'
 import { useListQuery } from '../../hooks/useListQuery.js'
 import { saveBlob } from '../../utils/download.js'
-import { formatDateTime, formatNumber, formatPercent } from '../../utils/format.js'
+import { formatPercent } from '../../utils/format.js'
 import QueryFilters from './components/QueryFilters.jsx'
 import QueryResultTable from './components/QueryResultTable.jsx'
 import StatisticsPanel from './components/StatisticsPanel.jsx'
@@ -21,6 +21,7 @@ const INITIAL_FILTERS = {
   pollutant: '',
   period: '',
   is_exceeded: '',
+  is_valid: '',
   exceedance_status: '',
   data_source: '',
   date_from: '',
@@ -75,17 +76,22 @@ export default function QueryPage() {
       <div className="stat-grid">
         <StatCard label="符合条件的数据量" value={summary ? summary.total : '-'} foot={summary ? `涉及 ${summary.station_count} 个监测点` : ''} />
         <StatCard
-          label="超标记录"
-          value={summary ? summary.exceeded_count : '-'}
-          tone={summary?.exceeded_count ? 'danger' : undefined}
-          foot={summary ? `超标率 ${formatPercent(summary.exceed_rate)}` : ''}
+          label="达标率 (剔除校准期)"
+          value={summary ? formatPercent(summary.compliance_rate) : '-'}
+          tone={summary && summary.compliance_rate < 0.9 ? 'danger' : undefined}
+          foot={summary ? `有效 ${summary.valid_count} 条 · 达标 ${summary.compliant_count} 条` : '校准期无效数据不参与'}
         />
-        <StatCard label="平均浓度" value={summary ? formatNumber(summary.avg_value) : '-'} foot="按当前筛选范围计算" />
         <StatCard
-          label="时间范围"
-          value={summary ? formatDateTime(summary.first_measured_at).slice(5, 10) : '-'}
-          unit={summary ? `~ ${formatDateTime(summary.last_measured_at).slice(5, 10)}` : ''}
-          foot={summary ? `${formatDateTime(summary.first_measured_at)} ~ ${formatDateTime(summary.last_measured_at)}` : ''}
+          label="校准期无效数据"
+          value={summary ? summary.invalid_count : '-'}
+          tone={summary?.invalid_count ? 'warning' : undefined}
+          foot="保留留痕, 不参与达标统计"
+        />
+        <StatCard
+          label="有效数据超标"
+          value={summary ? summary.valid_exceeded_count : '-'}
+          tone={summary?.valid_exceeded_count ? 'danger' : undefined}
+          foot="不含校准期无效数据中的超标"
         />
       </div>
 

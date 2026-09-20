@@ -31,6 +31,12 @@ class Station(TimestampMixin, db.Model):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    devices = db.relationship(
+        "Device",
+        back_populates="station",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
     def to_dict(self, include_stats=False, stats=None):
         payload = {

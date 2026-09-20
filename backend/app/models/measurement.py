@@ -18,6 +18,9 @@ class Measurement(TimestampMixin, db.Model):
     station_id = db.Column(
         db.Integer, db.ForeignKey("stations.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    device_id = db.Column(
+        db.Integer, db.ForeignKey("devices.id", ondelete="SET NULL"), index=True
+    )
     pollutant = db.Column(db.String(16), nullable=False, index=True)
     period = db.Column(db.String(16), nullable=False, default="hourly")
     value = db.Column(db.Float, nullable=False)
@@ -25,12 +28,16 @@ class Measurement(TimestampMixin, db.Model):
     limit_value = db.Column(db.Float)
     exceed_ratio = db.Column(db.Float)
     is_exceeded = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    # 校准期间录入的数据保留但不参与统计: is_valid=False
+    is_valid = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    invalid_reason = db.Column(db.String(32))
     measured_at = db.Column(db.DateTime, nullable=False, index=True)
     data_source = db.Column(db.String(16), nullable=False, default="manual")
     recorder = db.Column(db.String(64))
     remark = db.Column(db.Text)
 
     station = db.relationship("Station", back_populates="measurements")
+    device = db.relationship("Device", back_populates="measurements")
     exceedance = db.relationship(
         "Exceedance",
         back_populates="measurement",
@@ -56,6 +63,8 @@ class Measurement(TimestampMixin, db.Model):
             "limit_value": self.limit_value,
             "exceed_ratio": self.exceed_ratio,
             "is_exceeded": bool(self.is_exceeded),
+            "is_valid": bool(self.is_valid),
+            "invalid_reason": self.invalid_reason,
             "measured_at": iso(self.measured_at),
             "data_source": self.data_source,
             "data_source_label": label_of(DATA_SOURCE_LABELS, self.data_source),
@@ -63,6 +72,9 @@ class Measurement(TimestampMixin, db.Model):
             "remark": self.remark,
             "created_at": iso(self.created_at),
             "updated_at": iso(self.updated_at),
+            "device_id": self.device_id,
+            "device_code": self.device.code if self.device else None,
+            "device_name": self.device.name if self.device else None,
             "exceedance_id": self.exceedance.id if self.exceedance else None,
             "exceedance_status": self.exceedance.status if self.exceedance else None,
         }

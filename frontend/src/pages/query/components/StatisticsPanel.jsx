@@ -1,7 +1,7 @@
 import { SectionCard } from '../../../components/common/Card.jsx'
 import { Alert, EmptyState, Loading } from '../../../components/common/Feedback.jsx'
 import BarChart from '../../../components/common/BarChart.jsx'
-import { Field, Select } from '../../../components/common/FormField.jsx'
+import { Select } from '../../../components/common/FormField.jsx'
 import { formatNumber, formatPercent } from '../../../utils/format.js'
 
 const GROUP_OPTIONS = [
@@ -29,7 +29,7 @@ export default function StatisticsPanel({ params, onChange, data, loading, error
   return (
     <SectionCard
       title="聚合统计"
-      hint="统计基于上方筛选条件, 可与结果表交叉验证"
+      hint="默认剔除校准期无效数据, 可在筛选中调整“数据有效性”口径"
       actions={
         <>
           <div style={{ width: 160 }}>
@@ -67,7 +67,9 @@ export default function StatisticsPanel({ params, onChange, data, loading, error
                   <tr>
                     <th>分组</th>
                     <th className="text-right">{isCount ? '数据条数' : '统计值'}</th>
-                    <th className="text-right">数据量</th>
+                    <th className="text-right">有效数据量</th>
+                    <th className="text-right">校准期无效</th>
+                    <th className="text-right">达标率</th>
                     <th className="text-right">超标数</th>
                     <th className="text-right">超标率</th>
                   </tr>
@@ -77,13 +79,27 @@ export default function StatisticsPanel({ params, onChange, data, loading, error
                     <tr key={item.key}>
                       <td>{item.label}</td>
                       <td className="text-right strong">{formatNumber(item.value)}</td>
-                      <td className="text-right">{item.count}</td>
-                      <td className="text-right danger-text">{item.exceeded_count}</td>
-                      <td className="text-right">{formatPercent(item.exceed_rate)}</td>
+                      <td className="text-right">{item.valid_count ?? item.count}</td>
+                      <td className="text-right warning-text">{item.invalid_count ?? 0}</td>
+                      <td className="text-right">{formatPercent(item.compliance_rate)}</td>
+                      <td className="text-right danger-text">{item.valid_exceeded_count ?? item.exceeded_count}</td>
+                      <td className="text-right">
+                        {formatPercent(
+                          item.valid_count
+                            ? (item.valid_exceeded_count ?? item.exceeded_count) / item.valid_count
+                            : item.exceed_rate
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div className="small muted">
+              达标率/超标率口径: 校准期间录入的无效数据一律剔除
+              {data?.totals
+                ? ` · 合计有效 ${data.totals.valid_count} 条, 达标率 ${formatPercent(data.totals.compliance_rate)}`
+                : ''}
             </div>
           </>
         ) : null}

@@ -45,6 +45,18 @@ export default function EntryResultPanel({ result, summary, onClose }) {
                 <div className="stat-value">{summary.total}</div>
               </div>
               <div className="stat-card">
+                <div className="stat-label">有效数据</div>
+                <div className="stat-value">{summary.valid_count ?? summary.total}</div>
+                <div className="stat-foot">达标率 {formatPercent(summary.compliance_rate ?? 0)}</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">校准期无效</div>
+                <div className="stat-value" style={{ color: 'var(--danger)' }}>
+                  {summary.invalid_count ?? 0}
+                </div>
+                <div className="stat-foot">保留但不参与达标统计</div>
+              </div>
+              <div className="stat-card">
                 <div className="stat-label">其中超标</div>
                 <div className="stat-value danger-text">{summary.exceeded_count}</div>
                 <div className="stat-foot">超标率 {formatPercent(summary.exceed_rate)}</div>
@@ -81,6 +93,12 @@ export default function EntryResultPanel({ result, summary, onClose }) {
 
   const columns = [
     { key: 'pollutant', title: '监测因子', render: (row) => row.pollutant_label || row.pollutant },
+    {
+      key: 'validity',
+      title: '有效性',
+      render: (row) =>
+        row.is_valid === false ? <Tag tone="danger">校准期·无效</Tag> : <Tag tone="success">有效</Tag>
+    },
     { key: 'value', title: '监测值', render: (row) => `${formatNumber(row.value)} ${row.unit || ''}` },
     {
       key: 'limit',
@@ -91,7 +109,9 @@ export default function EntryResultPanel({ result, summary, onClose }) {
       key: 'exceeded',
       title: '判定',
       render: (row) =>
-        row.exceeded ? (
+        row.is_valid === false ? (
+          <Tag tone="neutral">不参与判定</Tag>
+        ) : row.exceeded ? (
           <Tag tone="danger">超标 {formatNumber(row.ratio, 2)} 倍</Tag>
         ) : row.applicable ? (
           <Tag tone="success">达标</Tag>
@@ -103,7 +123,7 @@ export default function EntryResultPanel({ result, summary, onClose }) {
       key: 'level',
       title: '等级',
       render: (row) =>
-        row.level ? (
+        row.level && row.is_valid !== false ? (
           <Tag tone={EXCEEDANCE_LEVEL_TONE[row.level]}>
             {row.level_label || EXCEEDANCE_LEVEL_LABELS[row.level] || row.level}
           </Tag>
@@ -129,8 +149,9 @@ export default function EntryResultPanel({ result, summary, onClose }) {
     >
       <div className="stack">
         {isPreview ? (
-          <Alert tone={payload.summary.exceeded_count ? 'warning' : 'success'}>
+          <Alert tone={payload.summary.exceeded_count || payload.summary.invalid_count ? 'warning' : 'success'}>
             共校验 {payload.summary.total} 个因子, 其中 {payload.summary.exceeded_count} 个超过限值
+            {payload.summary.invalid_count ? `, ${payload.summary.invalid_count} 个处于设备校准期(将标记无效)` : ''}
             {payload.summary.exceeded_pollutants.length
               ? `: ${payload.summary.exceeded_pollutants.join(', ')}`
               : ''}
@@ -150,6 +171,12 @@ export default function EntryResultPanel({ result, summary, onClose }) {
               <div className="stat-value danger-text">{payload.summary.exceeded_count}</div>
             </div>
             <div className="stat-card">
+              <div className="stat-label">校准期无效</div>
+              <div className="stat-value" style={{ color: 'var(--danger)' }}>
+                {payload.summary.invalid_count ?? 0}
+              </div>
+            </div>
+            <div className="stat-card">
               <div className="stat-label">跳过重复</div>
               <div className="stat-value" style={{ color: 'var(--warning)' }}>
                 {payload.summary.duplicate_count}
@@ -164,6 +191,15 @@ export default function EntryResultPanel({ result, summary, onClose }) {
           <Alert tone="warning">
             以下因子在该时刻已存在数据, 未写入: {payload.duplicates.map((item) => item.pollutant_label).join(', ')}
             。如需修正请勾选“覆盖同一时刻已有数据”后重新提交。
+          </Alert>
+        ) : null}
+
+        {payload.invalid_items?.length ? (
+          <Alert tone="error">
+            {payload.invalid_items
+              .map((item) => `${item.pollutant_label}${item.device_code ? `(${item.device_code})` : ''}`)
+              .join('、')}{' '}
+            在设备校准期间录入, 数据已保留并标记为<strong>无效</strong>, 不生成超标记录且不参与达标率统计。
           </Alert>
         ) : null}
 

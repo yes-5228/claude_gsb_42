@@ -19,6 +19,12 @@ const ANNOTATION_OPTIONS = [
   { value: 'ignored', label: '已忽略' }
 ]
 
+const VALIDITY_OPTIONS = [
+  { value: 'all', label: '全部数据 (含校准期无效)' },
+  { value: 'valid', label: '仅有效数据' },
+  { value: 'invalid', label: '仅校准期无效' }
+]
+
 const SOURCE_OPTIONS = [
   { value: 'manual', label: '手工录入' },
   { value: 'device', label: '设备上传' },
@@ -43,7 +49,7 @@ export default function QueryFilters({ value, loading, onSubmit, onReset }) {
       onReset={() => {
         setDraft({
           keyword: '', station_id: '', area: '', pollutant: '', period: '',
-          is_exceeded: '', exceedance_status: '', data_source: '',
+          is_exceeded: '', is_valid: '', exceedance_status: '', data_source: '',
           date_from: '', date_to: '', min_value: '', max_value: ''
         })
         onReset()
@@ -86,6 +92,9 @@ export default function QueryFilters({ value, loading, onSubmit, onReset }) {
       </Field>
       <Field label="是否超标">
         <Select value={draft.is_exceeded || ''} onChange={update('is_exceeded')} placeholder="全部" options={EXCEEDED_OPTIONS} />
+      </Field>
+      <Field label="数据有效性" hint="达标率统计自动剔除校准期无效数据">
+        <Select value={draft.is_valid || ''} onChange={update('is_valid')} placeholder="全部数据" options={VALIDITY_OPTIONS} />
       </Field>
       <Field label="标注状态">
         <Select

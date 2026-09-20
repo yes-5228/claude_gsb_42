@@ -77,6 +77,12 @@ export default function StationDetailDrawer({ stationId, onClose, onEdit }) {
               <div className="stat-value">{stats.measurement_count ?? 0}</div>
             </div>
             <div className="stat-card">
+              <div className="stat-label">校准期无效</div>
+              <div className="stat-value" style={{ color: 'var(--danger)' }}>
+                {stats.invalid_count ?? 0}
+              </div>
+            </div>
+            <div className="stat-card">
               <div className="stat-label">超标记录</div>
               <div className="stat-value danger-text">{stats.exceeded_count ?? 0}</div>
             </div>

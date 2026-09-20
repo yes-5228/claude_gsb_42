@@ -1,12 +1,12 @@
 """超标记录查询与人工标注."""
 from datetime import datetime
 
-from sqlalchemy import cast, func, or_
+from sqlalchemy import func, or_
 
 from ..domain.constants import EXCEEDANCE_LEVEL_LABELS, EXCEEDANCE_STATUS_LABELS
 from ..errors import NotFoundError, ValidationError
 from ..extensions import db
-from ..models import Exceedance, Measurement, Station
+from ..models import Exceedance, Station
 from ..models.base import iso
 
 STATUS_CHOICES = tuple(EXCEEDANCE_STATUS_LABELS.keys())

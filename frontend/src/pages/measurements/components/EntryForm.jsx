@@ -6,7 +6,8 @@ import { Alert, Loading } from '../../../components/common/Feedback.jsx'
 import Tag from '../../../components/common/Tag.jsx'
 import { useToast } from '../../../components/common/ToastProvider.jsx'
 import { usePollutantMeta, useStationOptions } from '../../../hooks/useOptions.js'
-import { formatNumber, toDateTimeInput } from '../../../utils/format.js'
+import { useDeviceAvailability } from '../../../hooks/useDeviceAvailability.js'
+import { formatDateTime, formatNumber, toDateTimeInput } from '../../../utils/format.js'
 
 const PERIODS = [
   { value: 'hourly', label: '小时均值' },
@@ -38,8 +39,17 @@ export default function EntryForm({ onPreview, onSubmitted }) {
   const [message, setMessage] = useState(null)
   const [busy, setBusy] = useState(null)
   const [evaluations, setEvaluations] = useState({})
+  const [acknowledged, setAcknowledged] = useState(false)
 
   const pollutants = pollutantData?.items ?? []
+  const pollutantCodes = useMemo(() => pollutants.map((item) => item.code), [pollutants])
+
+  const availability = useDeviceAvailability({
+    stationId: form.station_id ? Number(form.station_id) : '',
+    measuredAt: form.measured_at,
+    pollutants: pollutantCodes,
+    enabled: Boolean(form.station_id && form.measured_at)
+  })
 
   useEffect(() => {
     if (!form.station_id && stationData?.items?.length) {
@@ -47,13 +57,57 @@ export default function EntryForm({ onPreview, onSubmitted }) {
     }
   }, [stationData, form.station_id])
 
+  // 监测点 / 时刻变化后, 校准期知悉勾选需要重新确认
+  useEffect(() => {
+    setAcknowledged(false)
+  }, [form.station_id, form.measured_at])
+
+  const deviceInfo = useCallback(
+    (pollutant) => availability.data?.devices?.[pollutant] ?? null,
+    [availability.data]
+  )
+
+  const unavailableSelected = useMemo(() => {
+    return Object.keys(values)
+      .filter((code) => values[code] !== '' && values[code] != null)
+      .map((code) => deviceInfo(code))
+      .filter((info) => info && !info.available)
+  }, [values, deviceInfo])
+
+  const outOfRange = useCallback(
+    (pollutant) => {
+      const raw = values[pollutant]
+      const info = deviceInfo(pollutant)
+      if (raw === '' || raw == null || !info) return null
+      const number = Number(raw)
+      if (Number.isNaN(number)) return null
+      if (info.measure_min !== null && info.measure_min !== undefined && number < info.measure_min) {
+        return `低于设备量程下限 ${formatNumber(info.measure_min)} ${info.unit || ''}`
+      }
+      if (info.measure_max !== null && info.measure_max !== undefined && number > info.measure_max) {
+        return `高于设备量程上限 ${formatNumber(info.measure_max)} ${info.unit || ''}`
+      }
+      return null
+    },
+    [values, deviceInfo]
+  )
+
   const limitHint = useCallback(
     (pollutant) => {
       const limit = pollutant.limits?.[form.period]
-      if (limit === null || limit === undefined) return '该周期未设限值, 仅记录数值'
-      return `限值 ${formatNumber(limit)} ${pollutant.unit}`
+      const info = deviceInfo(pollutant.code)
+      const parts = []
+      if (limit === null || limit === undefined) parts.push('该周期未设限值, 仅记录数值')
+      else parts.push(`限值 ${formatNumber(limit)} ${pollutant.unit}`)
+      if (info && (info.measure_min !== null || info.measure_max !== null)) {
+        parts.push(
+          `设备量程 ${formatNumber(info.measure_min)} ~ ${formatNumber(info.measure_max)} ${info.unit || ''}`
+        )
+      }
+      if (info?.location) parts.push(`安装位置: ${info.location}`)
+      return parts.join(' · ')
     },
-    [form.period]
+    [form.period, deviceInfo]
   )
 
   const filled = useMemo(
@@ -96,22 +150,42 @@ export default function EntryForm({ onPreview, onSubmitted }) {
       setMessage('请先修正表单中标红的问题')
       return false
     }
+    if (unavailableSelected.length > 0 && !acknowledged) {
+      setMessage('所选时刻存在校准中的设备, 请阅读提示并勾选确认后再提交')
+      return false
+    }
     setMessage(null)
     return true
+  }
+
+  const annotateResults = (result) => {
+    result.results.forEach((item) => {
+      const info = deviceInfo(item.pollutant)
+      item.is_valid = info ? info.available : true
+      item.invalid_message = info && !info.available
+        ? '设备校准期间数据, 将标记为无效且不参与达标率统计'
+        : null
+      item.device_code = info?.device_code ?? null
+      item.device_name = info?.device_name ?? null
+    })
+    result.summary.invalid_count = result.results.filter((item) => !item.is_valid).length
+    return result
   }
 
   const runPreview = async () => {
     if (!validate()) return
     setBusy('preview')
     try {
-      const result = await previewEntries({ period: form.period, entries })
+      const result = annotateResults(await previewEntries({ period: form.period, entries }))
       const map = {}
       result.results.forEach((item) => {
         map[item.pollutant] = item
       })
       setEvaluations(map)
       onPreview?.(result)
-      if (result.summary.exceeded_count > 0) {
+      if (result.summary.invalid_count > 0) {
+        toast.warning(`校验完成: ${result.summary.invalid_count} 项处于设备校准期, 将标记为无效`)
+      } else if (result.summary.exceeded_count > 0) {
         toast.warning(`校验完成: ${result.summary.exceeded_count} 个因子超过限值`)
       } else {
         toast.success('校验完成: 所有因子均未超过限值')
@@ -145,9 +219,14 @@ export default function EntryForm({ onPreview, onSubmitted }) {
       })
       setEvaluations(map)
       setValues({})
+      setAcknowledged(false)
       onSubmitted?.(result)
       const written = result.summary.created_count + result.summary.updated_count
-      if (result.summary.exceeded_count > 0) {
+      if (result.summary.invalid_count > 0) {
+        toast.warning(
+          `写入 ${written} 条, 其中 ${result.summary.invalid_count} 条为校准期数据已标记无效(保留但不参与达标统计)`
+        )
+      } else if (result.summary.exceeded_count > 0) {
         toast.warning(`写入 ${written} 条数据, 其中 ${result.summary.exceeded_count} 项超标已生成待标注记录`)
       } else {
         toast.success(`录入成功, 共写入 ${written} 条数据`)
@@ -169,6 +248,8 @@ export default function EntryForm({ onPreview, onSubmitted }) {
     )
   }
 
+  const unavailableAll = availability.data?.unavailable ?? []
+
   return (
     <SectionCard
       title="监测数据录入"
@@ -178,6 +259,43 @@ export default function EntryForm({ onPreview, onSubmitted }) {
       <div className="stack">
         {stationError ? <Alert tone="error">{stationError.message}</Alert> : null}
         {message ? <Alert tone="error">{message}</Alert> : null}
+
+        {availability.loading ? (
+          <Alert tone="info">正在核对该时刻各因子监测设备的可用性...</Alert>
+        ) : null}
+
+        {unavailableAll.length > 0 ? (
+          <Alert tone="error">
+            <div className="stack" style={{ gap: 6 }}>
+              <div>
+                <strong>⚠ 以下设备在 {formatDateTime(form.measured_at)} 正处于校准期, 标记为不可用:</strong>
+              </div>
+              {unavailableAll.map((item) => (
+                <div key={item.pollutant}>
+                  <Tag tone="danger">{item.pollutant === 'PM25' ? 'PM2.5' : item.pollutant}</Tag>{' '}
+                  <span className="mono small">{item.device_code}</span> {item.device_name}
+                  {item.calibration ? (
+                    <span className="small">
+                      {' '}· 校准时段 {formatDateTime(item.calibration.started_at)} ~{' '}
+                      {formatDateTime(item.calibration.ended_at)}
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+              <div className="small">
+                校准期间仍可录入数据用于留痕, 但数据会自动标记为<strong>“无效”</strong>:
+                原始数值保留可查, 不生成超标记录, 并从达标率统计中自动剔除。
+              </div>
+              <div>
+                <Checkbox
+                  label="我已知悉上述设备不可用, 仍要提交该时刻数据(将标记为无效)"
+                  checked={acknowledged}
+                  onChange={(event) => setAcknowledged(event.target.checked)}
+                />
+              </div>
+            </div>
+          </Alert>
+        ) : null}
 
         <div className="form-grid">
           <Field label="监测点" required error={errors.station_id}>
@@ -192,7 +310,7 @@ export default function EntryForm({ onPreview, onSubmitted }) {
               }))}
             />
           </Field>
-          <Field label="监测时间" required error={errors.measured_at} hint="小时数据请填写整点">
+          <Field label="监测时间" required error={errors.measured_at} hint="小时数据请填写整点; 切换时刻会重新核对设备校准状态">
             <Input
               type="datetime-local"
               value={form.measured_at}
@@ -217,33 +335,52 @@ export default function EntryForm({ onPreview, onSubmitted }) {
         <div className="card" style={{ boxShadow: 'none' }}>
           <div className="card-header">
             <h3>因子浓度</h3>
-            <span className="hint">留空的因子不会写入</span>
+            <span className="hint">留空的因子不会写入; 关联设备量程与校准状态见字段提示</span>
           </div>
           <div className="card-body">
             {errors.entries ? <Alert tone="error">{errors.entries}</Alert> : null}
             <div className="form-grid">
               {pollutants.map((pollutant) => {
                 const evaluation = evaluations[pollutant.code]
+                const info = deviceInfo(pollutant.code)
+                const unavailable = info && !info.available
+                const rangeError = outOfRange(pollutant.code)
                 return (
                   <Field
                     key={pollutant.code}
                     label={`${pollutant.label} (${pollutant.unit})`}
-                    error={errors[pollutant.code]}
+                    error={errors[pollutant.code] || rangeError}
                     hint={limitHint(pollutant)}
                   >
-                    <div className="inline" style={{ flexWrap: 'nowrap' }}>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={values[pollutant.code] ?? ''}
-                        onChange={setValue(pollutant.code)}
-                        invalid={Boolean(errors[pollutant.code])}
-                        placeholder="--"
-                      />
-                      {evaluation?.exceeded ? <Tag tone="danger">超标</Tag> : null}
-                      {evaluation && !evaluation.exceeded && evaluation.applicable ? (
-                        <Tag tone="success">达标</Tag>
+                    <div className="stack" style={{ gap: 6 }}>
+                      <div className="inline" style={{ flexWrap: 'nowrap' }}>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={values[pollutant.code] ?? ''}
+                          onChange={setValue(pollutant.code)}
+                          invalid={Boolean(errors[pollutant.code]) || rangeError}
+                          placeholder="--"
+                        />
+                        {unavailable ? <Tag tone="danger" title="校准期间录入将标记为无效">校准中·无效</Tag> : null}
+                        {evaluation?.exceeded ? <Tag tone="danger">超标</Tag> : null}
+                        {evaluation && !evaluation.exceeded && evaluation.applicable && evaluation.is_valid !== false ? (
+                          <Tag tone="success">达标</Tag>
+                        ) : null}
+                      </div>
+                      {unavailable ? (
+                        <div className="small" style={{ color: 'var(--danger)' }}>
+                          {info.device_code} 校准中
+                          {info.calibration
+                            ? ` (${formatDateTime(info.calibration.started_at)} ~ ${formatDateTime(info.calibration.ended_at)})`
+                            : ''}
+                          , 录入后保留但标记无效
+                        </div>
+                      ) : info ? (
+                        <div className="small muted">
+                          关联设备: <span className="mono">{info.device_code}</span> {info.device_name}
+                        </div>
                       ) : null}
                     </div>
                   </Field>
@@ -260,7 +397,7 @@ export default function EntryForm({ onPreview, onSubmitted }) {
             onChange={setField('overwrite')}
           />
           <div className="small muted" style={{ marginTop: 4 }}>
-            勾选后重复提交将更新原记录并重新判定超标
+            勾选后重复提交将更新原记录并重新判定超标与数据有效性
           </div>
         </div>
 
@@ -268,11 +405,17 @@ export default function EntryForm({ onPreview, onSubmitted }) {
           <button type="button" className="btn" onClick={runPreview} disabled={busy !== null}>
             {busy === 'preview' ? '校验中...' : '超标校验预览'}
           </button>
-          <button type="button" className="btn btn-primary" onClick={submit} disabled={busy !== null}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={submit}
+            disabled={busy !== null || unavailableSelected.length > 0 && !acknowledged}
+          >
             {busy === 'submit' ? '提交中...' : '提交录入'}
           </button>
           <span className="small muted">
             已填写 {filled.length} / {pollutants.length} 个因子
+            {unavailableSelected.length > 0 ? ` · ${unavailableSelected.length} 项将标记无效` : ''}
           </span>
         </div>
       </div>

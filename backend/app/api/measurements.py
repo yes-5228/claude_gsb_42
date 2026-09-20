@@ -2,7 +2,7 @@
 from flask import Blueprint, current_app, request
 
 from ..domain.constants import DATA_SOURCE_LABELS, PERIOD_LABELS
-from ..services import measurement_service, query_service, station_service
+from ..services import device_service, measurement_service, query_service, station_service
 from ..utils.pagination import paginate_query
 from ..utils.validation import Validator
 from .helpers import json_payload, list_payload
@@ -75,6 +75,7 @@ def export_measurements():
         ("站点编码", lambda row: row.station.code if row.station else ""),
         ("站点名称", lambda row: row.station.name if row.station else ""),
         ("所属区域", lambda row: row.station.area if row.station else ""),
+        ("监测设备", lambda row: row.device.name if row.device else ""),
         ("监测因子", lambda row: row.pollutant_label()),
         ("数据周期", lambda row: PERIOD_LABELS.get(row.period, row.period)),
         ("监测值", "value"),
@@ -82,6 +83,8 @@ def export_measurements():
         ("限值", "limit_value"),
         ("是否超标", lambda row: "是" if row.is_exceeded else "否"),
         ("超标倍数", "exceed_ratio"),
+        ("数据有效性", lambda row: "无效" if not row.is_valid else "有效"),
+        ("无效原因", lambda row: "设备校准期间数据" if not row.is_valid else ""),
         ("监测时间", lambda row: row.measured_at.strftime("%Y-%m-%d %H:%M")),
         ("数据来源", lambda row: DATA_SOURCE_LABELS.get(row.data_source, row.data_source)),
         ("录入人", "recorder"),
@@ -107,6 +110,7 @@ def entry_context():
     """Options needed by the entry form in a single round trip."""
     return {
         "stations": station_service.option_list(),
+        "devices": device_service.option_list(),
         "periods": [{"value": key, "label": label} for key, label in PERIOD_LABELS.items()],
         "data_sources": [
             {"value": key, "label": label} for key, label in DATA_SOURCE_LABELS.items()

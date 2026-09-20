@@ -89,9 +89,19 @@ def stats_map(station_ids):
         .group_by(Measurement.station_id)
         .all()
     )
+    valid_measurements = dict(
+        db.session.query(Measurement.station_id, func.count(Measurement.id))
+        .filter(Measurement.station_id.in_(station_ids), Measurement.is_valid.is_(True))
+        .group_by(Measurement.station_id)
+        .all()
+    )
     exceeded = dict(
         db.session.query(Measurement.station_id, func.count(Measurement.id))
-        .filter(Measurement.station_id.in_(station_ids), Measurement.is_exceeded.is_(True))
+        .filter(
+            Measurement.station_id.in_(station_ids),
+            Measurement.is_exceeded.is_(True),
+            Measurement.is_valid.is_(True),
+        )
         .group_by(Measurement.station_id)
         .all()
     )
@@ -99,6 +109,12 @@ def stats_map(station_ids):
         db.session.query(Exceedance.station_id, func.count(Exceedance.id))
         .filter(Exceedance.station_id.in_(station_ids), Exceedance.status == "pending")
         .group_by(Exceedance.station_id)
+        .all()
+    )
+    invalid = dict(
+        db.session.query(Measurement.station_id, func.count(Measurement.id))
+        .filter(Measurement.station_id.in_(station_ids), Measurement.is_valid.is_(False))
+        .group_by(Measurement.station_id)
         .all()
     )
     last_seen = dict(
@@ -112,6 +128,8 @@ def stats_map(station_ids):
     return {
         station_id: {
             "measurement_count": int(measurements.get(station_id, 0)),
+            "valid_count": int(valid_measurements.get(station_id, 0)),
+            "invalid_count": int(invalid.get(station_id, 0)),
             "exceeded_count": int(exceeded.get(station_id, 0)),
             "pending_count": int(pending.get(station_id, 0)),
             "last_measured_at": iso(last_seen.get(station_id)),
@@ -130,7 +148,7 @@ def detail_stats(station):
             func.avg(Measurement.value),
             func.max(Measurement.value),
         )
-        .filter(Measurement.station_id == station.id)
+        .filter(Measurement.station_id == station.id, Measurement.is_valid.is_(True))
         .group_by(Measurement.pollutant)
         .all()
     )

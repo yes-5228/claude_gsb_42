@@ -2,7 +2,7 @@
 import click
 
 from .extensions import db
-from .models import Exceedance, Measurement, Station
+from .models import CalibrationRecord, Device, Exceedance, Measurement, Station
 
 
 def register_commands(app):
@@ -45,9 +45,11 @@ def register_commands(app):
     def stats():
         """Print a short record summary."""
         click.echo(
-            "监测点 %d 个 / 监测数据 %d 条 / 超标记录 %d 条"
+            "监测点 %d 个 / 监测设备 %d 台 / 校准记录 %d 条 / 监测数据 %d 条 / 超标记录 %d 条"
             % (
                 Station.query.count(),
+                Device.query.count(),
+                CalibrationRecord.query.count(),
                 Measurement.query.count(),
                 Exceedance.query.count(),
             )

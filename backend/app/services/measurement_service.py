@@ -1,9 +1,14 @@
-"""监测数据录入业务逻辑 (含超标自动判定)."""
+"""监测数据录入业务逻辑 (含超标自动判定与校准期有效性标记)."""
 from ..domain import exceedance_rules
 from ..domain.standards import get_pollutant
 from ..errors import ConflictError, NotFoundError, ValidationError
 from ..extensions import db
-from ..models import Exceedance, Measurement, Station
+from ..models import Device, Exceedance, Measurement, Station
+from . import device_service
+from .measurement_validity import (
+    effective_calibration_windows,
+    evaluate_validity,
+)
 
 
 def get_measurement(measurement_id):
@@ -66,6 +71,7 @@ def record_entries(station_id, measured_at, period, entries, data_source="manual
     }
 
     created, updated, exceeded, duplicates, evaluated = [], [], [], [], []
+    invalid_items = []
     seen = set()
     for entry in entries:
         pollutant = str(entry.get("pollutant", "")).upper()
@@ -88,17 +94,45 @@ def record_entries(station_id, measured_at, period, entries, data_source="manual
             )
 
         evaluation = exceedance_rules.evaluate(pollutant, period, value)
+
+        # 设备可用性 / 校准期有效性: 校准期间数据保留但标记为无效, 且不生成超标记录
+        record = existing.get(pollutant)
+        if record is not None and record.device_id:
+            device = db.session.get(Device, record.device_id)
+        else:
+            device = device_service.find_entry_device(station.id, pollutant, measured_at)
+        is_valid, invalid_reason, invalid_message = evaluate_validity(
+            device, measured_at,
+            effective_calibration_windows(device.id) if device is not None else None,
+        )
+        range_warning = _range_warning(device, value)
+
         evaluated.append(
             {
                 "pollutant": pollutant,
                 "pollutant_label": meta["label"],
                 "value": value,
                 "unit": meta["unit"],
+                "is_valid": is_valid,
+                "invalid_reason": invalid_reason,
+                "invalid_message": invalid_message,
+                "device_code": device.code if device else None,
+                "device_name": device.name if device else None,
+                "range_warning": range_warning,
                 **evaluation,
             }
         )
+        if not is_valid:
+            invalid_items.append(
+                {
+                    "pollutant": pollutant,
+                    "pollutant_label": meta["label"],
+                    "reason": invalid_reason,
+                    "message": invalid_message,
+                    "device_code": device.code if device else None,
+                }
+            )
 
-        record = existing.get(pollutant)
         if record is not None and not overwrite:
             duplicates.append(
                 {
@@ -117,19 +151,22 @@ def record_entries(station_id, measured_at, period, entries, data_source="manual
                                  measured_at=measured_at)
             db.session.add(record)
 
+        record.device_id = device.id if device else None
         record.value = value
         record.unit = meta["unit"]
         record.limit_value = evaluation["limit"]
         record.exceed_ratio = evaluation["ratio"]
         record.is_exceeded = evaluation["exceeded"]
+        record.is_valid = is_valid
+        record.invalid_reason = None if is_valid else invalid_reason
         record.data_source = data_source
         record.recorder = entry.get("recorder") or recorder
         record.remark = entry.get("remark") or remark
 
-        _sync_exceedance(record, meta, evaluation)
+        sync_exceedance_for_record(record)
         db.session.flush()
         (created if is_new else updated).append(record.to_dict(include_station=True))
-        if evaluation["exceeded"]:
+        if evaluation["exceeded"] and is_valid:
             exceeded.append(record.exceedance.to_dict() if record.exceedance else None)
 
     if not created and not updated and duplicates:
@@ -147,18 +184,45 @@ def record_entries(station_id, measured_at, period, entries, data_source="manual
         "updated": updated,
         "exceedances": [item for item in exceeded if item],
         "duplicates": duplicates,
+        "invalid_items": invalid_items,
         "evaluations": evaluated,
         "summary": {
             "created_count": len(created),
             "updated_count": len(updated),
-            "exceeded_count": len([item for item in evaluated if item["exceeded"]]),
+            "exceeded_count": len([
+                item for item in evaluated if item["exceeded"] and item["is_valid"]
+            ]),
+            "invalid_count": len(invalid_items),
             "duplicate_count": len(duplicates),
         },
     }
 
 
-def _sync_exceedance(record, meta, evaluation):
-    """Create / refresh / drop the exceedance row attached to a measurement."""
+def _range_warning(device, value):
+    """Soft warning when a reading falls outside the registered device range."""
+    if device is None:
+        return None
+    if device.measure_min is not None and value < device.measure_min:
+        return "监测值 %.4g 低于设备量程下限 %.4g, 请核对设备与数值" % (
+            value, device.measure_min)
+    if device.measure_max is not None and value > device.measure_max:
+        return "监测值 %.4g 高于设备量程上限 %.4g, 请核对设备与数值" % (
+            value, device.measure_max)
+    return None
+
+
+def sync_exceedance_for_record(record):
+    """Create / refresh / drop the exceedance row for one measurement.
+
+    Invalid (calibration-period) readings never carry an exceedance record,
+    though their raw exceedance flags/limit snapshot are retained.
+    """
+    if not record.is_valid:
+        if record.exceedance is not None:
+            db.session.delete(record.exceedance)
+        return
+
+    evaluation = exceedance_rules.evaluate(record.pollutant, record.period, record.value)
     if evaluation["exceeded"]:
         if record.exceedance is None:
             record.exceedance = Exceedance(

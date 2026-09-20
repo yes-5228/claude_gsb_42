@@ -15,16 +15,29 @@ export default function QueryResultTable({ rows, loading }) {
       title: '监测值',
       align: 'right',
       render: (row) => (
-        <span className={row.is_exceeded ? 'danger-text strong' : ''}>
+        <span className={row.is_exceeded && row.is_valid ? 'danger-text strong' : ''}>
           {formatNumber(row.value)} <span className="muted small">{row.unit}</span>
         </span>
       )
     },
     { key: 'limit_value', title: '限值', align: 'right', render: (row) => (row.limit_value === null ? '无限值' : formatNumber(row.limit_value)) },
     {
+      key: 'is_valid',
+      title: '有效性',
+      render: (row) =>
+        row.is_valid ? <Tag tone="success">有效</Tag> : <Tag tone="danger">校准期·无效</Tag>
+    },
+    {
       key: 'is_exceeded',
       title: '超标',
-      render: (row) => (row.is_exceeded ? <Tag tone="danger">是</Tag> : <Tag tone="success">否</Tag>)
+      render: (row) =>
+        !row.is_valid ? (
+          <Tag tone="neutral">不参与</Tag>
+        ) : row.is_exceeded ? (
+          <Tag tone="danger">是</Tag>
+        ) : (
+          <Tag tone="success">否</Tag>
+        )
     },
     {
       key: 'exceedance_status',
@@ -43,6 +56,7 @@ export default function QueryResultTable({ rows, loading }) {
       title: '来源',
       render: (row) => <Tag tone={DATA_SOURCE_TONE[row.data_source]}>{row.data_source_label}</Tag>
     },
+    { key: 'device_code', title: '设备', className: 'small mono', render: (row) => row.device_code || '-' },
     { key: 'recorder', title: '录入人', render: (row) => row.recorder || '-' }
   ]
 
@@ -51,6 +65,7 @@ export default function QueryResultTable({ rows, loading }) {
       columns={columns}
       rows={rows}
       loading={loading}
+      rowClassName={(row) => (row.is_valid ? '' : 'row-invalid')}
       emptyText="没有符合条件的数据, 请调整筛选条件"
       emptyIcon="🔍"
     />

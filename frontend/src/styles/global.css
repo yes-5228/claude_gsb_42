@@ -106,7 +106,13 @@ a { color: var(--primary); text-decoration: none; }
 .text-right { text-align: right; }
 .strong { font-weight: 600; }
 .danger-text { color: var(--danger); }
+.warning-text { color: var(--warning); }
 .success-text { color: var(--success); }
+
+/* 校准期无效数据行: 保留可查, 但视觉上弱化并加危险色侧边条 */
+table.data-table tbody tr.row-invalid { background: var(--danger-soft); }
+table.data-table tbody tr.row-invalid td { color: #9a3412; }
+table.data-table tbody tr.row-invalid td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
 
 /* ---------- buttons ---------- */
 .btn {

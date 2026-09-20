@@ -13,6 +13,22 @@ const EXCEEDED_OPTIONS = [
   { value: 'false', label: '仅达标' }
 ]
 
+const VALIDITY_OPTIONS = [
+  { value: 'all', label: '全部数据' },
+  { value: 'valid', label: '仅有效数据' },
+  { value: 'invalid', label: '仅校准期无效' }
+]
+
+const EMPTY = {
+  station_id: '',
+  pollutant: '',
+  period: '',
+  is_exceeded: '',
+  is_valid: '',
+  date_from: '',
+  date_to: ''
+}
+
 export default function MeasurementFilters({ value, loading, onSubmit, onReset }) {
   const [draft, setDraft] = useState(value)
   const { data: stationData } = useStationOptions()
@@ -29,7 +45,7 @@ export default function MeasurementFilters({ value, loading, onSubmit, onReset }
       loading={loading}
       onSearch={() => onSubmit(draft)}
       onReset={() => {
-        setDraft({ station_id: '', pollutant: '', period: '', is_exceeded: '', date_from: '', date_to: '' })
+        setDraft(EMPTY)
         onReset()
       }}
     >
@@ -54,6 +70,9 @@ export default function MeasurementFilters({ value, loading, onSubmit, onReset }
       </Field>
       <Field label="数据周期">
         <Select value={draft.period || ''} onChange={update('period')} placeholder="全部周期" options={PERIODS} />
+      </Field>
+      <Field label="数据有效性" hint="校准期无效数据保留可查">
+        <Select value={draft.is_valid || ''} onChange={update('is_valid')} placeholder="全部数据" options={VALIDITY_OPTIONS} />
       </Field>
       <Field label="超标情况">
         <Select value={draft.is_exceeded || ''} onChange={update('is_exceeded')} placeholder="全部" options={EXCEEDED_OPTIONS} />

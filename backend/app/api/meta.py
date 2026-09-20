@@ -14,7 +14,7 @@ from ..domain.constants import (
 )
 from ..domain.standards import POLLUTANTS
 from ..extensions import db
-from ..services import exceedance_service, query_service, station_service
+from ..services import device_service, exceedance_service, query_service, station_service
 
 bp = Blueprint("meta", __name__)
 
@@ -72,6 +72,7 @@ def overview():
     )
     return {
         "stations": station_service.metadata_summary(),
+        "devices": device_service.device_summary(),
         "measurements": query_service.summary(filters),
         "exceedances": exceedance_service.summary({}),
         "pending_exceedances": [record.to_dict() for record in pending_records],
